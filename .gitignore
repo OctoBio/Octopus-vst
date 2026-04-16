@@ -1,0 +1,8 @@
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.user
+.DS_Store
+Thumbs.db

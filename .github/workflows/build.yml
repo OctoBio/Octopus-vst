@@ -1,0 +1,61 @@
+name: Build Octopus VST3
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ── Windows ──────────────────────────────────────────────────
+  build-windows:
+    name: Windows VST3 (FL Studio ready)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload VST3 (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Octopus-Windows-VST3
+          path: build/Octopus_artefacts/Release/VST3/
+          if-no-files-found: error
+
+  # ── Linux ────────────────────────────────────────────────────
+  build-linux:
+    name: Linux VST3
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JUCE dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libx11-dev libxext-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev \
+            libxcomposite-dev libfreetype-dev \
+            libfontconfig1-dev libgl1-mesa-dev \
+            ninja-build
+
+      - name: Configure CMake
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload VST3 (Linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Octopus-Linux-VST3
+          path: build/Octopus_artefacts/Release/VST3/
+          if-no-files-found: error
