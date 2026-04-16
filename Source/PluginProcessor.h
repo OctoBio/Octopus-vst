@@ -22,8 +22,9 @@ struct ModConnection
 // ============================================================
 struct LfoPoint
 {
-    float x { 0.0f };  // 0..1 (phase)
-    float y { 0.0f };  // -1..+1 (amplitude)
+    float x     { 0.0f };  // 0..1 (phase)
+    float y     { 0.0f };  // -1..+1 (amplitude)
+    float curve { 0.0f };  // -1..+1 : 0 = linear, >0 = bow toward end, <0 = bow toward start
 };
 
 // ============================================================
@@ -188,6 +189,17 @@ private:
                 {
                     float span = pts[i+1].x - pts[i].x;
                     float t    = (span > 1e-6f) ? (x - pts[i].x) / span : 0.f;
+                    // Apply curve (atan-based smooth tension)
+                    float crv = pts[i].curve;
+                    if (std::abs (crv) > 0.001f)
+                    {
+                        float k     = crv * 6.0f;
+                        float a0    = std::atan (k * -0.5f);
+                        float a1    = std::atan (k *  0.5f);
+                        float denom = a1 - a0;
+                        if (std::abs (denom) > 1e-6f)
+                            t = (std::atan (k * (t - 0.5f)) - a0) / denom;
+                    }
                     return pts[i].y + t * (pts[i+1].y - pts[i].y);
                 }
             }

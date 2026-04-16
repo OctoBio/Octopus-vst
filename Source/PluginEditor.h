@@ -246,6 +246,31 @@ public:
             g.drawEllipse (px-4.f, py-4.f, 8.f, 8.f, 1.f);
         }
 
+        // Curve handles — diamond at midpoint of each segment
+        for (int i = 0; i + 1 < (int)points.size(); ++i)
+        {
+            float mx   = (points[i].x + points[i+1].x) * 0.5f;
+            float crv  = points[i].curve;
+            // Evaluate curved midpoint value
+            float myCurved = interpolate (mx);
+            float hx  = b.getX() + mx * b.getWidth();
+            float hy  = midY - myCurved * amp;
+            // Draw diamond
+            float ds = 5.f;
+            juce::Path diamond;
+            diamond.startNewSubPath (hx,    hy - ds);
+            diamond.lineTo          (hx+ds, hy);
+            diamond.lineTo          (hx,    hy + ds);
+            diamond.lineTo          (hx-ds, hy);
+            diamond.closeSubPath();
+            g.setColour ((i == curveDragIdx)
+                ? col
+                : col.withAlpha (std::abs(crv) > 0.05f ? 0.7f : 0.35f));
+            g.fillPath   (diamond);
+            g.setColour  (juce::Colours::white.withAlpha (0.6f));
+            g.strokePath (diamond, juce::PathStrokeType (0.8f));
+        }
+
         // Point de phase animé
         float phase = proc.getLfoPhase (lfoIndex);
         float dotX  = b.getX() + phase * b.getWidth();
@@ -258,22 +283,36 @@ public:
         // Hint
         g.setColour (col.withAlpha (0.35f));
         g.setFont (juce::FontOptions (7.5f));
-        g.drawText ("dbl-clic: suppr  |  drag: router LFO",
+        g.drawText ("clic: point  |  dbl-clic: suppr  |  diamant: courbe",
                     b.removeFromBottom(12), juce::Justification::centred);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        dragPtIdx = -1;
+        dragPtIdx    = -1;
+        curveDragIdx = -1;
         lfoRouteDrag = false;
         if (e.mods.isRightButtonDown()) return;
         auto b = getLocalBounds().toFloat().reduced (1.5f);
+        // Check curve handles first
+        int ci = findNearestCurveHandle (e.position.toFloat(), b);
+        if (ci >= 0) { curveDragIdx = ci; curveDragStart = points[ci].curve; return; }
+        // Then control points
         dragPtIdx = findNearest (e.position.toFloat(), b);
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
         auto b = getLocalBounds().toFloat().reduced (1.5f);
+        if (curveDragIdx >= 0)
+        {
+            // Drag up/down to adjust curve (-1..+1)
+            float delta = -(float)e.getDistanceFromDragStartY() / (b.getHeight() * 0.5f);
+            points[curveDragIdx].curve = juce::jlimit (-1.0f, 1.0f, curveDragStart + delta);
+            pushToProcessor();
+            repaint();
+            return;
+        }
         if (dragPtIdx >= 0)
         {
             auto [nx, ny] = screenToNorm (e.position.toFloat(), b);
@@ -327,7 +366,8 @@ public:
             pushToProcessor();
             repaint();
         }
-        dragPtIdx = -1;
+        dragPtIdx    = -1;
+        curveDragIdx = -1;
         lfoRouteDrag = false;
     }
 
@@ -347,8 +387,10 @@ private:
     NovaSynthProcessor& proc;
     juce::Colour        col;
     std::vector<LfoPoint> points;
-    int  dragPtIdx   { -1    };
-    bool lfoRouteDrag{ false };
+    int  dragPtIdx    { -1    };
+    int  curveDragIdx { -1    };
+    float curveDragStart { 0.0f };
+    bool lfoRouteDrag { false };
 
     float interpolate (float x) const
     {
@@ -359,6 +401,16 @@ private:
             {
                 float span = points[i+1].x - points[i].x;
                 float t    = (span > 1e-6f) ? (x - points[i].x) / span : 0.f;
+                float crv  = points[i].curve;
+                if (std::abs (crv) > 0.001f)
+                {
+                    float k  = crv * 6.0f;
+                    float a0 = std::atan (k * -0.5f);
+                    float a1 = std::atan (k *  0.5f);
+                    float dn = a1 - a0;
+                    if (std::abs (dn) > 1e-6f)
+                        t = (std::atan (k * (t - 0.5f)) - a0) / dn;
+                }
                 return points[i].y + t * (points[i+1].y - points[i].y);
             }
         }
@@ -386,6 +438,22 @@ private:
             if (d < bestD) { bestD = d; best = i; }
         }
         return best;
+    }
+
+    // Returns segment index if near a curve handle, else -1
+    int findNearestCurveHandle (juce::Point<float> pos, juce::Rectangle<float> b) const
+    {
+        float amp = b.getHeight() * 0.43f;
+        for (int i = 0; i + 1 < (int)points.size(); ++i)
+        {
+            float mx = (points[i].x + points[i+1].x) * 0.5f;
+            float my = interpolate (mx);
+            float hx = b.getX() + mx * b.getWidth();
+            float hy = b.getCentreY() - my * amp;
+            if (pos.getDistanceFrom ({hx, hy}) < 10.f)
+                return i;
+        }
+        return -1;
     }
 
     void addPointSorted (LfoPoint p)
@@ -517,14 +585,18 @@ class ModSlider : public juce::Slider
 public:
     using juce::Slider::Slider;
 
-    // Appelé au début du drag Shift : retourne true si on prend la main
     std::function<bool()>      onShiftDragStart;
-    // Appelé pendant le drag Shift avec le delta normalisé
     std::function<void(float)> onShiftDrag;
+    std::function<void()>      onRightClick;   // called on right-click instead of default
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         modActive = false;
+        if (e.mods.isRightButtonDown())
+        {
+            if (onRightClick) onRightClick();
+            return;   // swallow — don't open JUCE's text-entry popup
+        }
         if (e.mods.isShiftDown() && onShiftDragStart && onShiftDragStart())
         {
             modActive = true;
@@ -678,15 +750,6 @@ public:
             };
         }
 
-        resetBtn.setButtonText (juce::String::charToString (0x21BA));
-        resetBtn.setTooltip ("Reset to default");
-        resetBtn.setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a0a18));
-        resetBtn.setColour (juce::TextButton::buttonOnColourId,juce::Colour(0xff0a0a18));
-        resetBtn.setColour (juce::TextButton::textColourOffId, fillColour.withAlpha(0.5f));
-        resetBtn.setColour (juce::TextButton::textColourOnId,  fillColour);
-        resetBtn.onClick = [this] { slider.setValue (defaultVal, juce::sendNotification); };
-        addAndMakeVisible (resetBtn);
-
         // Initial value display update
         updateValueDisplay();
 
@@ -715,6 +778,19 @@ public:
                 repaint();
             }
         };
+
+        // Right-click on slider → popup menu with Reset
+        slider.onRightClick = [this]
+        {
+            juce::PopupMenu menu;
+            menu.addItem (1, "Reset to default");
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slider),
+                [this](int result)
+                {
+                    if (result == 1)
+                        slider.setValue (defaultVal, juce::sendNotification);
+                });
+        };
     }
 
     void setProcessor (NovaSynthProcessor* p)
@@ -730,7 +806,6 @@ public:
         auto b = getLocalBounds();
         label.setBounds      (b.removeFromBottom (12));
         valueLabel.setBounds (b.removeFromBottom (13));
-        resetBtn.setBounds   (getLocalBounds().removeFromRight (14).removeFromTop (14));
         slider.setBounds     (b);
     }
 
@@ -957,7 +1032,6 @@ private:
     juce::AudioProcessorValueTreeState* apvts_ptr { nullptr };
     int                 modDragLfoIdx  { -1 };
     float               modDragStartAmt{ 0.0f };
-    juce::TextButton    resetBtn;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
 };
 
@@ -1067,12 +1141,7 @@ public:
         defaultVal = (float)(int)std::round (
             p->getNormalisableRange().convertFrom0to1 (p->getDefaultValue()));
 
-        resetBtn.setButtonText (juce::String::charToString (0x21BA));
-        resetBtn.setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a0a18));
-        resetBtn.setColour (juce::TextButton::textColourOffId, colour.withAlpha(0.5f));
-        resetBtn.setColour (juce::TextButton::textColourOnId,  colour);
-        resetBtn.onClick = [this] { slider.setValue (defaultVal, juce::sendNotification); };
-        addAndMakeVisible (resetBtn);
+        slider.addMouseListener (this, false);
     }
 
     ~StepDisplay() override { slider.removeListener (this); }
@@ -1104,8 +1173,22 @@ public:
     {
         auto b = getLocalBounds();
         label.setBounds    (b.removeFromBottom (13));
-        resetBtn.setBounds (b.removeFromBottom (13).reduced (b.getWidth()/2 - 8, 1));
         slider.setBounds   (b);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isRightButtonDown())
+        {
+            juce::PopupMenu menu;
+            menu.addItem (1, "Reset to default");
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slider),
+                [this](int result)
+                {
+                    if (result == 1)
+                        slider.setValue (defaultVal, juce::sendNotification);
+                });
+        }
     }
 
     juce::Slider slider;
@@ -1115,7 +1198,6 @@ private:
     juce::Colour     col;
     float            defaultVal { 0.0f };
     juce::Label      label;
-    juce::TextButton resetBtn;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
 };
 
@@ -1858,7 +1940,6 @@ private:
     // ENV (3 envs × 4 knobs)
     std::unique_ptr<AdsrDisplay>  envDisplay[3];
     std::unique_ptr<LabelledKnob> envKnob[3][4];
-    juce::TextButton envClearBtn[2];   // CLR pour ENV2 (idx 0) et ENV3 (idx 1)
 
     // LFO (4 LFOs)
     std::unique_ptr<LfoCustomDisplay> lfoDisplay[4];
@@ -1876,6 +1957,8 @@ private:
 class TransferCurveDisplay : public juce::Component
 {
 public:
+    TransferCurveDisplay() = default;
+
     void setParams (int mode, float driveNorm)
     {
         this->mode      = mode;

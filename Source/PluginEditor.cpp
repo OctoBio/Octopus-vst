@@ -102,21 +102,6 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
         updateModeButtonStates (i);
     }
 
-    // CLR buttons for ENV2 and ENV3
-    for (int i = 0; i < 2; ++i)
-    {
-        int envModIdx = i + 4;  // ENV2=4, ENV3=5
-        envClearBtn[i].setButtonText ("CLR");
-        envClearBtn[i].setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0f0f20));
-        envClearBtn[i].setColour (juce::TextButton::textColourOffId, juce::Colour(0xffaa3344));
-        envClearBtn[i].onClick = [this, envModIdx, &proc]() {
-            proc.clearModSource (envModIdx);
-            repaint();
-        };
-        addAndMakeVisible (envClearBtn[i]);
-        envClearBtn[i].setVisible (false);
-    }
-
     showEnvTab (0);
     showLfoTab (0);
 }
@@ -200,10 +185,6 @@ void EnvLfoPanel::showEnvTab (int idx)
         for (int k = 0; k < 4; ++k)
             if (envKnob[e][k]) envKnob[e][k]->setVisible (show);
     }
-    // CLR visible seulement pour ENV2 (idx=1) et ENV3 (idx=2)
-    envClearBtn[0].setVisible (idx == 1);
-    envClearBtn[1].setVisible (idx == 2);
-
     resized();
     repaint();
 }
@@ -291,13 +272,6 @@ void EnvLfoPanel::resized()
 
         auto content = envBounds.reduced (5, 4);
         int e = currentEnvTab;
-
-        // Bouton CLR en haut à droite pour ENV2/ENV3
-        if (e >= 1)
-        {
-            auto clrArea = content.removeFromTop (18);
-            envClearBtn[e - 1].setBounds (clrArea.removeFromRight (32).reduced (0, 1));
-        }
 
         int dispH = content.getHeight() * 38 / 100;
         if (envDisplay[e] && envDisplay[e]->isVisible())
