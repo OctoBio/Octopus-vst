@@ -329,8 +329,8 @@ void NovaSynthProcessor::updateVoiceParameters()
 
         // Noise
         v->noiseEnabled = PARAM("noiseEnabled") > 0.5f;
-        v->noiseLevel   = PARAM("noiseLevel");
-        v->noisePan     = PARAM("noisePan");
+        v->noiseLevel   = P("noiseLevel");
+        v->noisePan     = P("noisePan");
         v->noiseType    = (int)PARAM("noiseType");
 
         // LFOs internes des voix — maintiennent juste la phase (audio)
