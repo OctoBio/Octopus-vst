@@ -3,17 +3,19 @@
 #include "PluginProcessor.h"
 
 // ============================================================
-//  Palette de couleurs
+//  Palette de couleurs — Sober Dark Navy
 // ============================================================
-// Thème Cyberpunk — Vert / Violet / Rouge
-inline const juce::Colour NS_CYAN   { 0xff00ffaa };  // Vert néon (ENV1, Master)
-inline const juce::Colour NS_ORANGE { 0xffff3344 };  // Rouge néon (ENV2)
-inline const juce::Colour NS_VIOLET { 0xff9933ff };  // Violet électrique (OSC1, Sub)
-inline const juce::Colour NS_PINK   { 0xffff2255 };  // Rouge vif (OSC2)
-inline const juce::Colour NS_GREEN  { 0xff00e87a };  // Vert profond (Filter)
-inline const juce::Colour NS_SKY    { 0xff6622ff };  // Violet profond (LFO4)
-inline const juce::Colour NS_BG0    { 0xff020209 };  // Fond noir quasi-pur
-inline const juce::Colour NS_BG2    { 0xff07070f };  // Fond très sombre
+inline const juce::Colour NS_CYAN   { 0xff00FF88 };  // Accent vert (ENV1, Master)
+inline const juce::Colour NS_ORANGE { 0xffff6644 };  // Orange (ENV2)
+inline const juce::Colour NS_VIOLET { 0xff7755dd };  // Violet (OSC1, Sub)
+inline const juce::Colour NS_PINK   { 0xffdd4477 };  // Rose (OSC2)
+inline const juce::Colour NS_GREEN  { 0xff00CC66 };  // Vert (Filter)
+inline const juce::Colour NS_SKY    { 0xff4499ee };  // Bleu ciel (LFO4)
+inline const juce::Colour NS_BG0    { 0xff0D0F1A };  // Fond très sombre navy
+inline const juce::Colour NS_BG2    { 0xff141622 };  // Panel background
+inline const juce::Colour NS_BORDER { 0xff1E2235 };  // Subtle border
+inline const juce::Colour NS_TEXT1  { 0xffE8EAF0 };  // Primary text
+inline const juce::Colour NS_TEXT2  { 0xff8A90A8 };  // Secondary text
 
 inline juce::Colour lfoColour (int idx)
 {
@@ -68,13 +70,13 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat().reduced (1.5f);
-        g.setColour (juce::Colour (0x55080812));
+        g.setColour (NS_BG2);
         g.fillRoundedRectangle (b, 4.0f);
-        g.setColour (col.withAlpha (0.30f));
+        g.setColour (col.withAlpha (0.22f));
         g.drawRoundedRectangle (b.reduced (0.5f), 4.0f, 1.0f);
 
         float midY = b.getCentreY();
-        g.setColour (juce::Colour (0xff25254a));
+        g.setColour (NS_BORDER);
         g.drawHorizontalLine ((int)midY, b.getX()+4, b.getRight()-4);
 
         float amp    = b.getHeight() * (0.08f + level * 0.34f);
@@ -190,25 +192,41 @@ public:
         repaint();
     }
 
-    void timerCallback() override { repaint(); }
+    void timerCallback() override
+    {
+        // Paused LFO: freeze the phase dot but still repaint for visual
+        repaint();
+    }
 
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat().reduced (1.5f);
 
-        g.setColour (juce::Colour (0x55040412));
+        // Dark navy background
+        g.setColour (NS_BG2);
         g.fillRoundedRectangle (b, 4.f);
 
-        // Grille
+        // Grid — subtle 16 divisions (like Serum)
         float midY = b.getCentreY();
-        g.setColour (juce::Colour (0xff141432));
-        float gw = b.getWidth() / 4.f;
-        for (int i = 1; i <= 3; ++i)
+        g.setColour (juce::Colour (0xff1E2235));
+        float gw = b.getWidth() / 16.f;
+        for (int i = 1; i < 16; ++i)
             g.drawVerticalLine ((int)(b.getX() + i*gw), b.getY()+2, b.getBottom()-2);
-        g.setColour (juce::Colour (0xff1e1e50));
+        // Emphasize quarter divisions
+        g.setColour (juce::Colour (0xff252840));
+        for (int i : {4, 8, 12})
+            g.drawVerticalLine ((int)(b.getX() + i*gw), b.getY()+2, b.getBottom()-2);
+        g.setColour (juce::Colour (0xff252840));
         g.drawHorizontalLine ((int)midY, b.getX()+2, b.getRight()-2);
-        g.setColour (col.withAlpha (0.4f));
+        g.setColour (col.withAlpha (0.35f));
         g.drawRoundedRectangle (b.reduced(0.5f), 4.f, 1.f);
+
+        // Paused indicator
+        if (lfoPaused)
+        {
+            g.setColour (juce::Colours::orange.withAlpha (0.18f));
+            g.fillRoundedRectangle (b, 4.f);
+        }
 
         // Forme d'onde
         float amp = b.getHeight() * 0.43f;
@@ -280,10 +298,18 @@ public:
         g.setColour (juce::Colours::white.withAlpha (0.9f));
         g.fillEllipse (dotX-2.5f, dotY-2.5f, 5.f, 5.f);
 
+        // Paused label
+        if (lfoPaused)
+        {
+            g.setColour (juce::Colours::orange.withAlpha (0.85f));
+            g.setFont (juce::FontOptions (9.f, juce::Font::bold));
+            g.drawText ("PAUSED", b.removeFromTop(14), juce::Justification::centred);
+        }
+
         // Hint
-        g.setColour (col.withAlpha (0.35f));
-        g.setFont (juce::FontOptions (7.5f));
-        g.drawText ("clic: point  |  dbl-clic: suppr  |  diamant: courbe",
+        g.setColour (NS_TEXT2.withAlpha (0.45f));
+        g.setFont (juce::FontOptions (8.0f));
+        g.drawText ("click: add  |  dbl-click: remove  |  diamond: curve  |  right-click: menu",
                     b.removeFromBottom(12), juce::Justification::centred);
     }
 
@@ -292,7 +318,11 @@ public:
         dragPtIdx    = -1;
         curveDragIdx = -1;
         lfoRouteDrag = false;
-        if (e.mods.isRightButtonDown()) return;
+        if (e.mods.isRightButtonDown())
+        {
+            showContextMenu();
+            return;
+        }
         auto b = getLocalBounds().toFloat().reduced (1.5f);
         // Check curve handles first
         int ci = findNearestCurveHandle (e.position.toFloat(), b);
@@ -383,6 +413,50 @@ public:
         }
     }
 
+    void showContextMenu()
+    {
+        // Clipboard shared across all LFO displays (static)
+        static std::vector<LfoPoint> clipboard;
+
+        juce::PopupMenu menu;
+        menu.addItem (1, "Reset LFO phase");
+        menu.addItem (2, lfoPaused ? "Resume LFO" : "Pause LFO");
+        menu.addItem (3, "Clear shape (sine)");
+        menu.addSeparator();
+        menu.addItem (4, "Copy shape");
+        menu.addItem (5, "Paste shape", !clipboard.empty());
+
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+            [this, &clipboard = clipboard](int result)
+            {
+                switch (result)
+                {
+                    case 1:
+                        // Reset LFO phase to 0
+                        proc.resetLfoPhase (lfoIndex);
+                        break;
+                    case 2:
+                        lfoPaused = !lfoPaused;
+                        break;
+                    case 3:
+                        setPreset (0);  // sine
+                        break;
+                    case 4:
+                        clipboard = points;
+                        break;
+                    case 5:
+                        if (!clipboard.empty())
+                        {
+                            points = clipboard;
+                            pushToProcessor();
+                            repaint();
+                        }
+                        break;
+                    default: break;
+                }
+            });
+    }
+
 private:
     NovaSynthProcessor& proc;
     juce::Colour        col;
@@ -391,6 +465,7 @@ private:
     int  curveDragIdx { -1    };
     float curveDragStart { 0.0f };
     bool lfoRouteDrag { false };
+    bool lfoPaused    { false };
 
     float interpolate (float x) const
     {
@@ -646,21 +721,21 @@ public:
         // NoTextBox → tout l'espace va au cercle du potard
         slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
         slider.setColour (juce::Slider::rotarySliderFillColourId,    fillColour);
-        slider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff2d2d5a));
-        slider.setColour (juce::Slider::thumbColourId,               fillColour.brighter(0.3f));
+        slider.setColour (juce::Slider::rotarySliderOutlineColourId, NS_BORDER);
+        slider.setColour (juce::Slider::thumbColourId,               fillColour.brighter(0.2f));
         addAndMakeVisible (slider);
 
         // Label : montre la valeur + nom en dessous
         label.setText (lbl, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
-        label.setFont (juce::FontOptions (7.5f));
-        label.setColour (juce::Label::textColourId, juce::Colour(0xff7a8aaa));
+        label.setFont (juce::FontOptions (10.0f));
+        label.setColour (juce::Label::textColourId, NS_TEXT2);
         addAndMakeVisible (label);
 
         // Valeur affichée au-dessus du nom
         valueLabel.setJustificationType (juce::Justification::centred);
-        valueLabel.setFont (juce::FontOptions (9.0f, juce::Font::bold));
-        valueLabel.setColour (juce::Label::textColourId, fillColour.brighter(0.4f));
+        valueLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        valueLabel.setColour (juce::Label::textColourId, NS_TEXT1);
         addAndMakeVisible (valueLabel);
 
         // Met à jour la valeur affichée à chaque changement
@@ -779,16 +854,44 @@ public:
             }
         };
 
-        // Right-click on slider → popup menu with Reset
+        // Right-click on slider → popup menu with Reset + Set value
         slider.onRightClick = [this]
         {
             juce::PopupMenu menu;
             menu.addItem (1, "Reset to default");
+            menu.addItem (2, "Set value...");
             menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slider),
                 [this](int result)
                 {
                     if (result == 1)
+                    {
                         slider.setValue (defaultVal, juce::sendNotification);
+                    }
+                    else if (result == 2)
+                    {
+                        // Show alert window with text entry
+                        auto* aw = new juce::AlertWindow ("Set value",
+                            "Enter value for " + labelText + ":",
+                            juce::MessageBoxIconType::NoIcon);
+                        aw->addTextEditor ("val",
+                            slider.textFromValueFunction
+                                ? slider.textFromValueFunction (slider.getValue())
+                                : juce::String (slider.getValue(), 3));
+                        aw->addButton ("OK",     1);
+                        aw->addButton ("Cancel", 0);
+                        aw->enterModalState (true,
+                            juce::ModalCallbackFunction::create ([aw, this](int r) {
+                                if (r == 1)
+                                {
+                                    auto txt = aw->getTextEditorContents ("val");
+                                    double val = slider.valueFromTextFunction
+                                        ? slider.valueFromTextFunction (txt)
+                                        : txt.getDoubleValue();
+                                    slider.setValue (val, juce::sendNotification);
+                                }
+                                delete aw;
+                            }), false);
+                    }
                 });
         };
     }
@@ -804,8 +907,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        label.setBounds      (b.removeFromBottom (12));
-        valueLabel.setBounds (b.removeFromBottom (13));
+        label.setBounds      (b.removeFromBottom (14));
+        valueLabel.setBounds (b.removeFromBottom (14));
         slider.setBounds     (b);
     }
 
@@ -832,28 +935,28 @@ public:
             float  knobR     = outerR;
 
             // Fond sombre (recouvre slider JUCE)
-            g.setColour (juce::Colour (0xff060612));
+            g.setColour (NS_BG0);
             g.fillEllipse (cx - knobR, cy - knobR, knobR * 2.f, knobR * 2.f);
 
             // Piste complète
             juce::Path track;
             track.addCentredArc (cx, cy, knobR * 0.86f, knobR * 0.86f, 0.f, startA, endA, true);
-            g.setColour (juce::Colour (0xff20203a));
+            g.setColour (NS_BORDER);
             g.strokePath (track, juce::PathStrokeType (3.f));
 
-            // Arc valeur
+            // Arc valeur — vert accent NS_CYAN
             juce::Path valArc;
             valArc.addCentredArc (cx, cy, knobR * 0.86f, knobR * 0.86f, 0.f, startA, valueA, true);
-            g.setColour (col.withAlpha (0.90f));
+            g.setColour (col.withAlpha (0.92f));
             g.strokePath (valArc, juce::PathStrokeType (3.f));
 
-            // Corps central
+            // Corps central — dark navy #1A1D2E
             float innerR = knobR * 0.62f;
-            juce::ColourGradient grad (juce::Colour (0xff1c1c34), cx, cy - innerR,
-                                       juce::Colour (0xff0a0a18), cx, cy + innerR, false);
+            juce::ColourGradient grad (juce::Colour (0xff1A1D2E), cx, cy - innerR,
+                                       juce::Colour (0xff0D0F1A), cx, cy + innerR, false);
             g.setGradientFill (grad);
             g.fillEllipse (cx - innerR, cy - innerR, innerR * 2.f, innerR * 2.f);
-            g.setColour (col.withAlpha (0.35f));
+            g.setColour (col.withAlpha (0.25f));
             g.drawEllipse (cx - innerR, cy - innerR, innerR * 2.f, innerR * 2.f, 1.2f);
 
             // Indicateur (ligne blanche) à la position de base
@@ -1127,8 +1230,8 @@ public:
 
         label.setText (lbl, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
-        label.setFont (juce::FontOptions (8.0f));
-        label.setColour (juce::Label::textColourId, juce::Colour(0xff7a8aaa));
+        label.setFont (juce::FontOptions (10.0f));
+        label.setColour (juce::Label::textColourId, NS_TEXT2);
         addAndMakeVisible (label);
 
         att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>
@@ -1244,9 +1347,9 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (juce::Colour(0x55080815));
+        g.setColour (NS_BG2);
         g.fillRoundedRectangle (b, 4.0f);
-        g.setColour (col.withAlpha(0.3f));
+        g.setColour (col.withAlpha(0.25f));
         g.drawRoundedRectangle (b.reduced(0.5f), 4.0f, 1.0f);
 
         float total = attack + decay + 0.3f + release;
@@ -1720,17 +1823,20 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
-        g.setColour (juce::Colour(0x660e0e1e));
+        g.setColour (NS_BG2);
         g.fillRoundedRectangle (b, 6.0f);
-        g.setColour (col.withAlpha (0.50f));
+        g.setColour (NS_BORDER.interpolatedWith (col, 0.15f));
         g.drawRoundedRectangle (b.reduced(0.5f), 6.0f, 1.0f);
-        g.setColour (col.withAlpha(0.12f));
+        g.setColour (col.withAlpha(0.07f));
         g.fillRoundedRectangle (b.removeFromTop(20), 5.0f);
-        g.setColour (col);
-        g.setFont (juce::FontOptions (11.5f, juce::Font::bold));
+        g.setColour (NS_TEXT1);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.drawText ("OSC " + juce::String(oscNum),
                     getLocalBounds().removeFromTop(20).reduced(8,0),
                     juce::Justification::centredLeft);
+        // Accent left bar
+        g.setColour (col.withAlpha (0.75f));
+        g.fillRoundedRectangle (getLocalBounds().toFloat().removeFromLeft(2).removeFromTop(20), 1.0f);
     }
 
     void resized() override

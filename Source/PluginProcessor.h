@@ -73,6 +73,7 @@ public:
     bool  hasModConnection    (int lfoIdx, const juce::String& paramID) const;
     float getLfoValue (int idx) const;
     float getLfoPhase (int idx) const;
+    void  resetLfoPhase (int idx);   // resets qLfo[idx].phase = 0
 
     std::atomic<float> lfo1Value{0.f}, lfo2Value{0.f}, lfo3Value{0.f}, lfo4Value{0.f};
     std::atomic<float> lfo1Phase{0.f}, lfo2Phase{0.f}, lfo3Phase{0.f}, lfo4Phase{0.f};

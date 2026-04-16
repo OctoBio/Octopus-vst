@@ -16,9 +16,9 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
         juce::Colour c = tabColour (i);
         tabBtns[i].setButtonText (tabNames[i]);
         tabBtns[i].setClickingTogglesState (false);
-        tabBtns[i].setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a0a16));
-        tabBtns[i].setColour (juce::TextButton::buttonOnColourId,juce::Colour(0xff0a0a16));
-        tabBtns[i].setColour (juce::TextButton::textColourOffId, c.withAlpha (0.45f));
+        tabBtns[i].setColour (juce::TextButton::buttonColourId,  NS_BG2);
+        tabBtns[i].setColour (juce::TextButton::buttonOnColourId,NS_BG2);
+        tabBtns[i].setColour (juce::TextButton::textColourOffId, NS_TEXT2.withAlpha (0.6f));
         tabBtns[i].setColour (juce::TextButton::textColourOnId,  c);
         // First 3 buttons → ENV section, last 4 → LFO section
         if (i < 3)
@@ -223,24 +223,26 @@ void EnvLfoPanel::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
 
-    // Outer border
-    g.setColour (juce::Colour(0x660e0e1e));
+    // Panel background
+    g.setColour (NS_BG2);
     g.fillRoundedRectangle (b, 6.0f);
+    g.setColour (NS_BORDER);
+    g.drawRoundedRectangle (b.reduced(0.5f), 6.0f, 1.0f);
 
     int totalW = getWidth();
     int envW   = totalW * 45 / 100;
     int lfoW   = totalW - envW;
 
-    // ENV section background
+    // ENV section subtle border
     auto envSection = juce::Rectangle<float>(0.f, 0.f, (float)envW, b.getHeight());
     juce::Colour envC = tabColour (currentEnvTab);
-    g.setColour (envC.withAlpha (0.20f));
+    g.setColour (envC.withAlpha (0.12f));
     g.drawRoundedRectangle (envSection.reduced(0.5f), 6.0f, 1.0f);
 
-    // LFO section background
+    // LFO section subtle border
     auto lfoSection = juce::Rectangle<float>((float)envW, 0.f, (float)lfoW, b.getHeight());
     juce::Colour lfoC = tabColour (currentLfoTab + 3);
-    g.setColour (lfoC.withAlpha (0.20f));
+    g.setColour (lfoC.withAlpha (0.12f));
     g.drawRoundedRectangle (lfoSection.reduced(0.5f), 6.0f, 1.0f);
 
     // Active tab indicators
@@ -558,9 +560,9 @@ NovaSynthEditor::NovaSynthEditor (NovaSynthProcessor& p)
     addAndMakeVisible (keysBtn);
     setWantsKeyboardFocus (true);
 
-    setSize (1240, 670);
+    setSize (1364, 737);
     setResizable (true, true);
-    setResizeLimits (820, 560, 1600, 1080);
+    setResizeLimits (900, 616, 1760, 1188);
 }
 
 // ============================================================
@@ -727,15 +729,22 @@ void NovaSynthEditor::refreshPresetCombo()
 void NovaSynthEditor::drawSection (juce::Graphics& g, juce::Rectangle<int> b,
                                     const juce::String& title, juce::Colour colour)
 {
-    g.setColour (juce::Colour(0x660f0f1f));
+    // Panel background #141622
+    g.setColour (NS_BG2);
     g.fillRoundedRectangle (b.toFloat(), 5.0f);
-    g.setColour (colour.withAlpha (0.45f));
+    // Border #1E2235, with slight colour tint
+    g.setColour (NS_BORDER.interpolatedWith (colour, 0.15f));
     g.drawRoundedRectangle (b.toFloat().reduced(0.5f), 5.0f, 1.0f);
-    g.setColour (colour.withAlpha(0.12f));
+    // Header accent strip
+    g.setColour (colour.withAlpha(0.08f));
     g.fillRoundedRectangle (b.toFloat().removeFromTop(18), 4.0f);
-    g.setColour (colour);
-    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    // Title — 12pt bold, white
+    g.setColour (NS_TEXT1);
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     g.drawText (title, b.reduced(7,2).removeFromTop(18), juce::Justification::centredLeft);
+    // Accent dot/bar on left edge
+    g.setColour (colour.withAlpha (0.75f));
+    g.fillRoundedRectangle (b.toFloat().removeFromLeft(2).removeFromTop(18), 1.0f);
 }
 
 void NovaSynthEditor::paint (juce::Graphics& g)
@@ -745,92 +754,30 @@ void NovaSynthEditor::paint (juce::Graphics& g)
     float H     = (float)fullB.getHeight();
 
     // ============================================================
-    //  FOND CYBERPUNK NÉO-FUTURISTE
+    //  FOND SOBRE — Dark Navy + Grille subtile
     // ============================================================
 
-    // --- Base très sombre ---
+    // Base très sombre navy #0D0F1A
     g.fillAll (NS_BG0);
 
-    // --- Grille fine (20px) ---
-    g.setColour (juce::Colour (0xff090914));
-    for (int x = 0; x < (int)W; x += 20)
+    // Grille fine subtile (40px)
+    g.setColour (juce::Colour (0xff121420));
+    for (int x = 0; x < (int)W; x += 40)
         g.drawVerticalLine   (x, 0.f, H);
-    for (int y = 0; y < (int)H; y += 20)
+    for (int y = 0; y < (int)H; y += 40)
         g.drawHorizontalLine (y, 0.f, W);
 
-    // --- Grille large accentuée (80px) ---
-    g.setColour (juce::Colour (0xff0e0e28));
-    for (int x = 0; x < (int)W; x += 80)
+    // Grille large (160px), légèrement plus visible
+    g.setColour (juce::Colour (0xff161828));
+    for (int x = 0; x < (int)W; x += 160)
         g.drawVerticalLine   (x, 0.f, H);
-    for (int y = 0; y < (int)H; y += 80)
+    for (int y = 0; y < (int)H; y += 160)
         g.drawHorizontalLine (y, 0.f, W);
 
-    // --- Lignes circuit (traces néon fixes) ---
-    auto circuitLine = [&](float x1, float y1, float x2, float y2, juce::Colour c, float a = 0.30f)
+    // Léger vignette / gradient radial centré
     {
-        g.setColour (c.withAlpha (a));
-        g.drawLine  (x1, y1, x2, y2, 1.0f);
-        g.setColour (c.withAlpha (a * 0.35f));
-        g.drawLine  (x1, y1, x2, y2, 4.0f);   // halo glow
-    };
-    // Vert
-    circuitLine (0,      H*0.22f, W*0.25f, H*0.22f, NS_GREEN);
-    circuitLine (W*0.25f,H*0.22f, W*0.25f, H*0.50f, NS_GREEN);
-    circuitLine (W*0.65f,H*0.68f, W,       H*0.68f, NS_GREEN);
-    circuitLine (W*0.65f,H*0.40f, W*0.65f, H*0.68f, NS_GREEN, 0.18f);
-    // Violet
-    circuitLine (W*0.55f, 0,      W*0.55f, H*0.30f, NS_VIOLET);
-    circuitLine (0,       H*0.78f,W*0.38f, H*0.78f, NS_VIOLET);
-    circuitLine (W*0.38f, H*0.60f,W*0.38f, H*0.78f, NS_VIOLET, 0.20f);
-    circuitLine (W*0.80f, H*0.50f,W,       H*0.50f, NS_VIOLET, 0.22f);
-    // Rouge
-    circuitLine (W*0.82f, 0,      W*0.82f, H*0.18f, NS_PINK);
-    circuitLine (W*0.45f, H*0.88f,W,       H*0.88f, NS_PINK);
-    circuitLine (W*0.45f, H*0.72f,W*0.45f, H*0.88f, NS_PINK, 0.18f);
-
-    // --- Noeuds circuit (petits carrés aux jonctions) ---
-    auto node = [&](float x, float y, juce::Colour c)
-    {
-        g.setColour (c.withAlpha (0.60f));
-        g.fillRect  (x - 2.5f, y - 2.5f, 5.f, 5.f);
-        g.setColour (c.withAlpha (0.20f));
-        g.fillRect  (x - 5.f,  y - 5.f,  10.f, 10.f);
-    };
-    node (W*0.25f, H*0.22f, NS_GREEN);
-    node (W*0.25f, H*0.50f, NS_GREEN);
-    node (W*0.65f, H*0.68f, NS_GREEN);
-    node (W*0.55f, H*0.30f, NS_VIOLET);
-    node (W*0.38f, H*0.78f, NS_VIOLET);
-    node (W*0.82f, H*0.18f, NS_PINK);
-    node (W*0.45f, H*0.88f, NS_PINK);
-
-    // --- Reticule aux coins ---
-    auto corner = [&](float x, float y, float sx, float sy, juce::Colour c)
-    {
-        float cs = 18.f;
-        g.setColour (c.withAlpha (0.75f));
-        g.drawLine  (x, y, x + sx*cs, y, 1.5f);
-        g.drawLine  (x, y, x, y + sy*cs, 1.5f);
-        g.setColour (c.withAlpha (0.40f));
-        g.drawLine  (x, y, x + sx*(cs+8), y, 1.f);
-        g.drawLine  (x, y, x, y + sy*(cs+8), 1.f);
-        g.setColour (c);
-        g.fillEllipse (x - 2.f, y - 2.f, 4.f, 4.f);
-    };
-    corner (5.f,   5.f,   +1, +1, NS_GREEN);
-    corner (W-5.f, 5.f,   -1, +1, NS_VIOLET);
-    corner (5.f,   H-5.f, +1, -1, NS_PINK);
-    corner (W-5.f, H-5.f, -1, -1, NS_GREEN);
-
-    // --- Scan lines (alternance légère) ---
-    g.setColour (juce::Colour (0x09000000));
-    for (int y = 0; y < (int)H; y += 3)
-        g.drawHorizontalLine (y, 0.f, W);
-
-    // --- Lueur centrale subtile ---
-    {
-        juce::ColourGradient glow (NS_VIOLET.withAlpha (0.07f), W*0.5f, H*0.5f,
-                                   juce::Colour (0x00000000),   W,      H, true);
+        juce::ColourGradient glow (juce::Colour (0x0a1a2040), W*0.5f, H*0.5f,
+                                   juce::Colour (0x00000000), W, H, true);
         g.setGradientFill (glow);
         g.fillRect (fullB);
     }
@@ -840,21 +787,21 @@ void NovaSynthEditor::paint (juce::Graphics& g)
     // ============================================================
     auto titleBar = fullB.removeFromTop (40);
 
-    // Fond de la barre titre
-    g.setColour (juce::Colour(0xff050510));
+    // Fond de la barre titre — panel dark
+    g.setColour (NS_BG2);
     g.fillRect (titleBar);
 
-    // Ligne décorative sous le titre
-    g.setColour (NS_VIOLET.withAlpha (0.40f));
+    // Ligne décorative sous le titre — accent vert subtil
+    g.setColour (NS_CYAN.withAlpha (0.30f));
     g.drawHorizontalLine (40, 0.f, W);
 
     // Titre à gauche
     auto nameArea = titleBar.removeFromLeft (140);
-    g.setColour (NS_VIOLET);
+    g.setColour (NS_TEXT1);
     g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
     g.drawText ("OCTOPUS", nameArea.reduced(8, 0), juce::Justification::centredLeft);
-    g.setColour (NS_GREEN.withAlpha (0.6f));
-    g.setFont (juce::FontOptions (7.5f));
+    g.setColour (NS_TEXT2);
+    g.setFont (juce::FontOptions (8.0f));
     g.drawText ("SYNTHESIZER", nameArea.translated (0, 8).reduced(8, 0),
                 juce::Justification::bottomLeft);
 

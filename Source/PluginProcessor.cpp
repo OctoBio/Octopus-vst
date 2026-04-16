@@ -438,6 +438,12 @@ float NovaSynthProcessor::getLfoPhase (int idx) const
     }
 }
 
+void NovaSynthProcessor::resetLfoPhase (int idx)
+{
+    if (idx >= 0 && idx < 4)
+        qLfo[idx].reset();
+}
+
 // ---- processBlock ----
 
 void NovaSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer,
