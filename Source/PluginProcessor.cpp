@@ -61,9 +61,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
         params.push_back (pFloat (("osc"+o+"UniBlend").toRawUTF8(),
                                    ("OSC"+o+" Uni Blend").toRawUTF8(), 0.0f, 1.0f, 0.5f));
 
-        // Enable
+        // Enable — seul OSC1 est activé par défaut
+        float defaultEnabled = (osc == 1) ? 1.0f : 0.0f;
         params.push_back (pFloat (("osc"+o+"Enabled").toRawUTF8(),
-                                   ("OSC"+o+" On").toRawUTF8(), 0.0f, 1.0f, 1.0f));
+                                   ("OSC"+o+" On").toRawUTF8(), 0.0f, 1.0f, defaultEnabled));
     }
 
     // ---- ADSR (plages Serum : 0.5ms → 10s, courbe log) ----
@@ -96,7 +97,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
     params.push_back (pFloat ("filterFat",     "Filter Fat",     0.0f,  1.0f,  0.0f));
     params.push_back (pFloat ("filterMix",     "Filter Mix",     0.0f,  1.0f,  1.0f));
     params.push_back (pFloat ("filterPan",     "Filter Pan",    -1.0f,  1.0f,  0.0f));
-    params.push_back (pFloat ("filterEnabled",  "Filter On",      0.0f, 1.0f, 1.0f));
+    params.push_back (pFloat ("filterEnabled",  "Filter On",      0.0f, 1.0f, 0.0f));
     params.push_back (pFloat ("filterRouteOsc1","Filter R OSC1",  0.0f, 1.0f, 1.0f));
     params.push_back (pFloat ("filterRouteOsc2","Filter R OSC2",  0.0f, 1.0f, 1.0f));
     params.push_back (pFloat ("filterRouteOsc3","Filter R OSC3",  0.0f, 1.0f, 1.0f));
@@ -111,7 +112,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
     params.push_back (pFloat  ("subLevel",   "Sub Level", 0.0f, 1.0f, 0.0f));
     params.push_back (pChoice ("subWave",    "Sub Wave",  {"Sine","Triangle","Saw","Square"}));
     params.push_back (pFloat  ("subOct",     "Sub Oct",   -2.0f, 0.0f, -1.0f));
-    params.push_back (pFloat  ("subEnabled", "Sub On",     0.0f, 1.0f, 1.0f));
+    params.push_back (pFloat  ("subEnabled", "Sub On",     0.0f, 1.0f, 0.0f));
 
     // ---- Noise oscillateur ----
     params.push_back (pFloat  ("noiseEnabled", "Noise On",    0.0f, 1.0f, 0.0f));
