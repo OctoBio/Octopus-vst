@@ -1464,8 +1464,26 @@ public:
         }
     }
 
+    void setProcessor (NovaSynthProcessor* p) { proc_ptr = p; }
+
     // mouseDown requis pour recevoir les events mouseDrag dans JUCE
-    void mouseDown (const juce::MouseEvent&) override { envDragActive = false; }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        envDragActive = false;
+
+        // Clic droit : menu pour reset les modulations (ENV2/ENV3 seulement)
+        if (e.mods.isRightButtonDown() && envIndex >= 1 && proc_ptr != nullptr)
+        {
+            int modIdx = envIndex + 3;  // ENV2 -> 4, ENV3 -> 5
+            juce::PopupMenu m;
+            m.addItem (1, "Reset modulations (ENV " + juce::String(envIndex + 1) + ")");
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                [this, modIdx](int r) {
+                    if (r == 1 && proc_ptr != nullptr)
+                        proc_ptr->clearModSource (modIdx);
+                });
+        }
+    }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
@@ -1495,6 +1513,7 @@ public:
 private:
     bool envDragActive { false };
     juce::AudioProcessorValueTreeState* apvts_ptr { nullptr };
+    NovaSynthProcessor* proc_ptr { nullptr };
     std::vector<juce::String> ids;
     juce::Colour col;
     float attack{0.01f}, decay{0.1f}, sustain{0.7f}, release{0.3f};

@@ -92,7 +92,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
         juce::NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f));
     params.push_back (pFloat ("filterRes",     "Filter Res",     0.0f,  1.0f,  0.0f));
     params.push_back (pChoice ("filterType",   "Filter Type",    {"LP 6","LP 12","LP 24","HP 12","HP 24","BP","Notch","Comb"}));
-    params.push_back (pFloat ("filterEnvAmt",  "Filter Env Amt", -1.0f, 1.0f,  0.5f));
+    params.push_back (pFloat ("filterEnvAmt",  "Filter Env Amt", -1.0f, 1.0f,  0.0f));
     params.push_back (pFloat ("filterDrive",   "Filter Drive",   0.0f,  1.0f,  0.0f));
     params.push_back (pFloat ("filterFat",     "Filter Fat",     0.0f,  1.0f,  0.0f));
     params.push_back (pFloat ("filterMix",     "Filter Mix",     0.0f,  1.0f,  1.0f));

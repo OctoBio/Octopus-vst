@@ -114,9 +114,11 @@ EnvLfoPanel::~EnvLfoPanel()
 
 void EnvLfoPanel::setProcessorForKnobs (NovaSynthProcessor* p)
 {
-    for (int e = 0; e < 3; ++e)
+    for (int e = 0; e < 3; ++e) {
         for (int k = 0; k < 4; ++k)
             if (envKnob[e][k]) envKnob[e][k]->setProcessor (p);
+        if (envDisplay[e]) envDisplay[e]->setProcessor (p);
+    }
     for (int l = 0; l < 4; ++l) {
         if (lfoRateKnob[l])  lfoRateKnob[l]->setProcessor (p);
         if (lfoShapeKnob[l]) lfoShapeKnob[l]->setProcessor (p);
