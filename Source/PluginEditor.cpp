@@ -100,6 +100,50 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
             addAndMakeVisible (lfoModeBtns[i][m]);
         }
         updateModeButtonStates (i);
+
+        // BPM sync toggle
+        auto syncID = "lfo" + juce::String(i+1) + "Sync";
+        auto divID  = "lfo" + juce::String(i+1) + "SyncDiv";
+        lfoSyncBtn[i].setButtonText ("BPM");
+        lfoSyncBtn[i].setClickingTogglesState (true);
+        lfoSyncBtn[i].setToggleState (*apvts.getRawParameterValue (syncID) > 0.5f,
+                                      juce::dontSendNotification);
+        lfoSyncBtn[i].setColour (juce::TextButton::buttonColourId,   juce::Colour(0xff0a0a14));
+        lfoSyncBtn[i].setColour (juce::TextButton::buttonOnColourId, lc.withAlpha(0.45f));
+        lfoSyncBtn[i].setColour (juce::TextButton::textColourOffId,  lc.withAlpha(0.5f));
+        lfoSyncBtn[i].setColour (juce::TextButton::textColourOnId,   lc);
+        lfoSyncBtn[i].onClick = [this, i, syncID, divID]()
+        {
+            float v = lfoSyncBtn[i].getToggleState() ? 1.0f : 0.0f;
+            if (auto* p = this->apvts.getParameter (syncID))
+                p->setValueNotifyingHost (v);
+            // Show/hide rate knob vs div selector
+            if (lfoRateKnob[i])  lfoRateKnob[i]->setVisible (v < 0.5f);
+            lfoSyncDivBox[i].setVisible (v > 0.5f);
+            resized();
+        };
+        addAndMakeVisible (lfoSyncBtn[i]);
+
+        // Sync division dropdown
+        const char* divLabels[9] = { "4/1","2/1","1/1","1/2","1/4","1/8","1/16","1/32","1/64" };
+        for (int d = 0; d < 9; ++d) lfoSyncDivBox[i].addItem (divLabels[d], d + 1);
+        lfoSyncDivBox[i].setSelectedId ((int)*apvts.getRawParameterValue (divID) + 1,
+                                         juce::dontSendNotification);
+        lfoSyncDivBox[i].setColour (juce::ComboBox::backgroundColourId, juce::Colour(0xff0a0a14));
+        lfoSyncDivBox[i].setColour (juce::ComboBox::textColourId,       lc);
+        lfoSyncDivBox[i].setColour (juce::ComboBox::outlineColourId,    lc.withAlpha(0.3f));
+        lfoSyncDivBox[i].onChange = [this, i, divID]()
+        {
+            int sel = lfoSyncDivBox[i].getSelectedId() - 1;
+            if (auto* p = this->apvts.getParameter (divID))
+                p->setValueNotifyingHost (p->convertTo0to1 ((float)sel));
+        };
+        addAndMakeVisible (lfoSyncDivBox[i]);
+
+        // Initial visibility based on sync state
+        bool isSync = lfoSyncBtn[i].getToggleState();
+        if (lfoRateKnob[i]) lfoRateKnob[i]->setVisible (!isSync);
+        lfoSyncDivBox[i].setVisible (isSync);
     }
 
     showEnvTab (0);
@@ -212,9 +256,13 @@ void EnvLfoPanel::showLfoTab (int idx)
     {
         bool show = (l == idx);
         if (lfoDisplay[l])   lfoDisplay[l]->setVisible (show);
-        if (lfoRateKnob[l])  lfoRateKnob[l]->setVisible (show);
         if (lfoShapeKnob[l]) lfoShapeKnob[l]->setVisible (show);
         for (int m = 0; m < 3; ++m) lfoModeBtns[l][m].setVisible (show);
+        lfoSyncBtn[l].setVisible (show);
+        // Rate knob OR sync div box, depending on sync state
+        bool isSync = lfoSyncBtn[l].getToggleState();
+        if (lfoRateKnob[l])  lfoRateKnob[l]->setVisible (show && !isSync);
+        lfoSyncDivBox[l].setVisible (show && isSync);
     }
 
     resized();
@@ -297,8 +345,10 @@ void EnvLfoPanel::resized()
         auto content = lfoBounds.reduced (5, 4);
         int l = currentLfoTab;
 
-        // Mode buttons (FREE/TRIG/ONE)
+        // Top row: [FREE TRIG ONE] mode buttons + [BPM] sync toggle on right
         auto modeRow = content.removeFromTop (22);
+        auto syncArea = modeRow.removeFromRight (44);
+        lfoSyncBtn[l].setBounds (syncArea.reduced (1, 0));
         int modeW = modeRow.getWidth() / 3;
         for (int m = 0; m < 3; ++m)
             lfoModeBtns[l][m].setBounds (m < 2 ? modeRow.removeFromLeft (modeW) : modeRow);
@@ -310,14 +360,21 @@ void EnvLfoPanel::resized()
             lfoDisplay[l]->setBounds (content.removeFromTop (dispH));
         content.removeFromTop (3);
 
-        // RATE + SHAPE knobs side by side
+        // RATE/DIV + SHAPE knobs side by side
+        int kw = content.getWidth() / 2;
+        auto leftArea = content.removeFromLeft (kw);
         if (lfoRateKnob[l] && lfoRateKnob[l]->isVisible())
+            lfoRateKnob[l]->setBounds (leftArea);
+        if (lfoSyncDivBox[l].isVisible())
         {
-            int kw = content.getWidth() / 2;
-            lfoRateKnob[l]->setBounds  (content.removeFromLeft (kw));
-            if (lfoShapeKnob[l] && lfoShapeKnob[l]->isVisible())
-                lfoShapeKnob[l]->setBounds (content);
+            // Center vertically the dropdown in the knob area
+            int dh = 24;
+            int dy = leftArea.getY() + (leftArea.getHeight() - dh) / 2;
+            lfoSyncDivBox[l].setBounds (leftArea.getX() + 8, dy,
+                                         leftArea.getWidth() - 16, dh);
         }
+        if (lfoShapeKnob[l] && lfoShapeKnob[l]->isVisible())
+            lfoShapeKnob[l]->setBounds (content);
     }
 }
 

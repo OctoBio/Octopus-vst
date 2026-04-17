@@ -2142,6 +2142,8 @@ private:
     std::unique_ptr<LabelledKnob>     lfoRateKnob[4];
     std::unique_ptr<LabelledKnob>     lfoShapeKnob[4];
     juce::TextButton                  lfoModeBtns[4][3];   // [lfoIdx][mode: FREE/TRIG/ONE]
+    juce::TextButton                  lfoSyncBtn[4];       // BPM sync toggle per LFO
+    juce::ComboBox                    lfoSyncDivBox[4];    // 1/2, 1/4, 1/8...
     int currentLfoMode[4] = { 0, 0, 0, 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EnvLfoPanel)

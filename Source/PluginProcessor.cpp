@@ -153,6 +153,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
     params.push_back (pFloat ("lfo3Shape", "LFO3 Shape", 0.0f, 3.0f, 0.0f));
     params.push_back (pFloat ("lfo4Shape", "LFO4 Shape", 0.0f, 3.0f, 0.0f));
 
+    // ---- LFO Tempo Sync (BPM mode + musical division) ----
+    juce::StringArray syncDivs { "4/1","2/1","1/1","1/2","1/4","1/8","1/16","1/32","1/64" };
+    for (int i = 1; i <= 4; ++i) {
+        juce::String n = juce::String(i);
+        params.push_back (pFloat  (("lfo"+n+"Sync").toRawUTF8(),
+                                    ("LFO"+n+" Sync").toRawUTF8(), 0.0f, 1.0f, 0.0f));
+        params.push_back (pChoice (("lfo"+n+"SyncDiv").toRawUTF8(),
+                                    ("LFO"+n+" Div").toRawUTF8(), syncDivs));
+    }
+
     // ---- Multiband Compressor ----
     params.push_back (pFloat ("compEnabled",   "Comp On",      0.0f,  1.0f,  0.0f));
     params.push_back (pFloat ("compInGain",    "Comp In",     -12.0f, 12.0f, 0.0f));
@@ -567,10 +577,28 @@ void NovaSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     static const char* lfoWaveIDs[4]  = {"lfo1Wave","lfo2Wave","lfo3Wave","lfo4Wave"};
     static const char* lfoModeIDs[4]  = {"lfo1Mode","lfo2Mode","lfo3Mode","lfo4Mode"};
     static const char* lfoShapeIDs[4] = {"lfo1Shape","lfo2Shape","lfo3Shape","lfo4Shape"};
+    static const char* lfoSyncIDs[4]  = {"lfo1Sync","lfo2Sync","lfo3Sync","lfo4Sync"};
+    static const char* lfoDivIDs[4]   = {"lfo1SyncDiv","lfo2SyncDiv","lfo3SyncDiv","lfo4SyncDiv"};
+    // Multipliers from "4/1, 2/1, 1/1, 1/2, 1/4, 1/8, 1/16, 1/32, 1/64" (whole notes)
+    static const float divMul[9]   = { 4.f, 2.f, 1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f };
+
+    // Get tempo from host playhead, fallback to 120 BPM
+    double bpm = 120.0;
+    if (auto* ph = getPlayHead()) {
+        if (auto info = ph->getPosition())
+            if (auto t = info->getBpm()) bpm = *t;
+    }
 
     for (int i = 0; i < 4; ++i)
     {
         float rate  = PARAM (lfoRateIDs[i]);
+        // Tempo sync: override rate based on musical division
+        if (PARAM (lfoSyncIDs[i]) > 0.5f) {
+            int divIdx = juce::jlimit (0, 8, (int)PARAM (lfoDivIDs[i]));
+            // Whole-note period in seconds = 4 * 60/bpm
+            float periodSec = (float)(4.0 * 60.0 / bpm) * divMul[divIdx];
+            if (periodSec > 0.0001f) rate = 1.0f / periodSec;
+        }
         int   wave  = (int)PARAM (lfoWaveIDs[i]);
         int   mode  = (int)PARAM (lfoModeIDs[i]);
         float shape = PARAM (lfoShapeIDs[i]);
