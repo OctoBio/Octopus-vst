@@ -3,28 +3,38 @@
 #include "PluginProcessor.h"
 
 // ============================================================
-//  Palette de couleurs — Sober Dark Navy
+//  Palette — Sober monochrome (warm amber accent + grayscale)
 // ============================================================
-inline const juce::Colour NS_CYAN   { 0xff00FF88 };  // Accent vert (ENV1, Master)
-inline const juce::Colour NS_ORANGE { 0xffff6644 };  // Orange (ENV2)
-inline const juce::Colour NS_VIOLET { 0xff7755dd };  // Violet (OSC1, Sub)
-inline const juce::Colour NS_PINK   { 0xffdd4477 };  // Rose (OSC2)
-inline const juce::Colour NS_GREEN  { 0xff00CC66 };  // Vert (Filter)
-inline const juce::Colour NS_SKY    { 0xff4499ee };  // Bleu ciel (LFO4)
-inline const juce::Colour NS_BG0    { 0xff0D0F1A };  // Fond très sombre navy
-inline const juce::Colour NS_BG2    { 0xff141622 };  // Panel background
-inline const juce::Colour NS_BORDER { 0xff1E2235 };  // Subtle border
-inline const juce::Colour NS_TEXT1  { 0xffE8EAF0 };  // Primary text
-inline const juce::Colour NS_TEXT2  { 0xff8A90A8 };  // Secondary text
+// Single accent color for all interactive/active states. Elements
+// differentiate via position/label, not hue — for a cohesive look.
+inline const juce::Colour NS_ACCENT { 0xffC9A36B };  // Warm amber (all accents)
+inline const juce::Colour NS_ACCENT_DIM { 0xff7A6340 };  // Dim amber (inactive)
 
+// Legacy aliases — all point to the single accent for visual coherence.
+inline const juce::Colour NS_CYAN   = NS_ACCENT;
+inline const juce::Colour NS_ORANGE = NS_ACCENT;
+inline const juce::Colour NS_VIOLET = NS_ACCENT;
+inline const juce::Colour NS_PINK   = NS_ACCENT;
+inline const juce::Colour NS_GREEN  = NS_ACCENT;
+inline const juce::Colour NS_SKY    = NS_ACCENT;
+
+// Neutral backgrounds and text.
+inline const juce::Colour NS_BG0    { 0xff0B0C10 };  // App background
+inline const juce::Colour NS_BG2    { 0xff14161C };  // Panel background
+inline const juce::Colour NS_BORDER { 0xff252832 };  // Subtle border
+inline const juce::Colour NS_TEXT1  { 0xffE4E6EC };  // Primary text
+inline const juce::Colour NS_TEXT2  { 0xff7A7F8C };  // Secondary text
+
+// LFO color helper: slight alpha variation per index for subtle distinction,
+// same hue throughout (monochrome palette).
 inline juce::Colour lfoColour (int idx)
 {
     switch (idx) {
-        case 0: return NS_VIOLET;
-        case 1: return NS_PINK;
-        case 2: return NS_GREEN;
-        case 3: return NS_SKY;
-        default: return NS_VIOLET;
+        case 0: return NS_ACCENT;
+        case 1: return NS_ACCENT.withBrightness (0.85f);
+        case 2: return NS_ACCENT.withBrightness (0.72f);
+        case 3: return NS_ACCENT.withBrightness (0.60f);
+        default: return NS_ACCENT;
     }
 }
 
