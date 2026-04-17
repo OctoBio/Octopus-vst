@@ -701,11 +701,40 @@ private:
             case 3: r = std::pow(w, 2.f) / (1.f + std::pow(w, 2.f)); break; // HP12
             case 4: r = std::pow(w, 4.f) / (1.f + std::pow(w, 4.f)); break; // HP24
             case 5: { float d = 1.f + Q*Q*(w-1.f/w)*(w-1.f/w);
-                      r = 1.f / std::sqrt (juce::jmax(0.001f, d)); break; } // BP
+                      r = 1.f / std::sqrt (juce::jmax(0.001f, d)); break; } // BP12
             case 6: { float n = w*w-1.f;
                       float d = n*n + w*w/(Q*Q);
                       r = std::sqrt (n*n / juce::jmax(0.001f, d)); break; } // Notch
-            case 7: r = 0.5f + 0.5f * std::cos (w * juce::MathConstants<float>::twoPi); break; // Comb (approx)
+            case 7: r = 0.5f + 0.5f * std::cos (w * juce::MathConstants<float>::twoPi); break; // Comb
+            case 8: { float d = 1.f + Q*Q*(w-1.f/w)*(w-1.f/w);
+                      float b = 1.f / std::sqrt (juce::jmax(0.001f, d));
+                      r = b * b; break; } // BP24
+            case 9: { float n = w*w-1.f;
+                      float d = n*n + w*w/(Q*Q);
+                      float nn = std::sqrt (n*n / juce::jmax(0.001f, d));
+                      r = nn * nn; break; } // Notch24
+            case 10: { // LowShelf: gain below cutoff
+                float gainDb = (res - 0.5f) * 24.f;
+                float A = std::pow(10.f, gainDb / 20.f);
+                float lpg = 1.f / (1.f + w*w);
+                r = (1.f + (A - 1.f) * lpg) / juce::jmax(A, 1.f);
+                break;
+            }
+            case 11: { // HighShelf
+                float gainDb = (res - 0.5f) * 24.f;
+                float A = std::pow(10.f, gainDb / 20.f);
+                float hpg = (w*w) / (1.f + w*w);
+                r = (1.f + (A - 1.f) * hpg) / juce::jmax(A, 1.f);
+                break;
+            }
+            case 12: { // PeakEQ: bell around cutoff
+                float gainDb = (res - 0.5f) * 24.f;
+                float A = std::pow(10.f, gainDb / 20.f);
+                float d = 1.f + Q*Q*(w-1.f/w)*(w-1.f/w);
+                float bp = 1.f / std::sqrt (juce::jmax(0.001f, d));
+                r = (1.f + (A - 1.f) * bp) / juce::jmax(A, 1.f);
+                break;
+            }
             default: r = 1.f;
         }
         if (res > 0.05f && (type == 1 || type == 2))
@@ -1387,7 +1416,10 @@ public:
     AdsrDisplay (juce::AudioProcessorValueTreeState& apvts,
                  const juce::String& attackID, const juce::String& decayID,
                  const juce::String& sustainID, const juce::String& releaseID,
-                 juce::Colour colour)
+                 juce::Colour colour,
+                 const juce::String& curveAID = {},
+                 const juce::String& curveDID = {},
+                 const juce::String& curveRID = {})
         : col(colour)
     {
         struct P { const juce::String& id; float& val; };
@@ -1398,21 +1430,53 @@ public:
             ref = *apvts.getRawParameterValue (id);
             ids.push_back (id);
         }
+        if (curveAID.isNotEmpty()) {
+            apvts.addParameterListener (curveAID, this);
+            curveA = *apvts.getRawParameterValue (curveAID);
+            curveAid = curveAID;
+        }
+        if (curveDID.isNotEmpty()) {
+            apvts.addParameterListener (curveDID, this);
+            curveD = *apvts.getRawParameterValue (curveDID);
+            curveDid = curveDID;
+        }
+        if (curveRID.isNotEmpty()) {
+            apvts.addParameterListener (curveRID, this);
+            curveR = *apvts.getRawParameterValue (curveRID);
+            curveRid = curveRID;
+        }
         apvts_ptr = &apvts;
     }
 
     ~AdsrDisplay() override
     {
         for (auto& id : ids) apvts_ptr->removeParameterListener (id, this);
+        for (auto& id : { curveAid, curveDid, curveRid })
+            if (id.isNotEmpty()) apvts_ptr->removeParameterListener (id, this);
     }
 
     void parameterChanged (const juce::String& id, float v) override
     {
-        if (id == ids[0]) attack  = v;
-        if (id == ids[1]) decay   = v;
-        if (id == ids[2]) sustain = v;
-        if (id == ids[3]) release = v;
+        if      (id == ids[0])   attack  = v;
+        else if (id == ids[1])   decay   = v;
+        else if (id == ids[2])   sustain = v;
+        else if (id == ids[3])   release = v;
+        else if (id == curveAid) curveA  = v;
+        else if (id == curveDid) curveD  = v;
+        else if (id == curveRid) curveR  = v;
         juce::MessageManager::callAsync ([this] { repaint(); });
+    }
+
+    // Atan-based tension curve — same as DSP.  Used to render curved segments.
+    static float shapeCurve (float t, float c)
+    {
+        if (std::abs (c) < 1e-3f) return t;
+        float k = c * 6.0f;
+        float a0 = std::atan (k * -0.5f);
+        float a1 = std::atan (k *  0.5f);
+        float denom = a1 - a0;
+        if (std::abs (denom) < 1e-6f) return t;
+        return (std::atan (k * (t - 0.5f)) - a0) / denom;
     }
 
     void paint (juce::Graphics& g) override
@@ -1428,20 +1492,38 @@ public:
         float sx = 0.3f / total, rx = release / total;
         (void)rx;
 
-        float w = b.getWidth(), h = b.getHeight();
+        float w = b.getWidth();
         float x0 = b.getX(), bot = b.getBottom() - 2.0f, top = b.getY() + 2.0f;
 
         float x1 = x0 + ax*w, x2 = x1 + dx*w, x3 = x2 + sx*w, x4 = x3 + (release/total)*w;
         float susY = top + (1.0f - sustain) * (bot - top);
 
+        // Helper: build curved segment between (xa,ya)->(xb,yb) using curve c
+        const int N = 32;
+        auto addSeg = [&](juce::Path& p, float xa, float ya, float xb, float yb, float c, bool startNew)
+        {
+            for (int i = 0; i <= N; ++i)
+            {
+                float t = (float)i / N;
+                float s = shapeCurve (t, c);
+                float px = xa + (xb - xa) * t;
+                float py = ya + (yb - ya) * s;
+                if (i == 0 && startNew) p.startNewSubPath (px, py);
+                else                     p.lineTo (px, py);
+            }
+        };
+
         juce::Path path;
-        path.startNewSubPath (x0, bot);
-        path.lineTo (x1, top);
-        path.lineTo (x2, susY);
+        // Attack: bot -> top (level goes 0 -> 1, so Y goes bot -> top)
+        addSeg (path, x0, bot, x1, top, curveA, true);
+        // Decay: top -> susY (level 1 -> sustain)
+        addSeg (path, x1, top, x2, susY, curveD, false);
         path.lineTo (x3, susY);
-        path.lineTo (x4, bot);
+        // Release: susY -> bot
+        addSeg (path, x3, susY, x4, bot, curveR, false);
 
         juce::Path fill = path;
+        fill.lineTo (x4, bot);
         fill.lineTo (x0, bot);
         fill.closeSubPath();
         g.setColour (col.withAlpha(0.15f));
@@ -1454,40 +1536,89 @@ public:
         })
             g.fillEllipse (px-2.5f, py-2.5f, 5.0f, 5.0f);
 
-        // Hint for drag
-        if (envIndex >= 1)  // ENV2 and ENV3 are assignable
-        {
-            g.setColour (col.withAlpha (0.35f));
-            g.setFont (juce::FontOptions (7.5f));
-            g.drawText ("drag: router ENV",
-                        b.removeFromBottom(12), juce::Justification::centred);
-        }
+        // Curve drag hint (small text bottom-right)
+        g.setColour (col.withAlpha (0.30f));
+        g.setFont (juce::FontOptions (7.0f));
+        g.drawText ("drag segments for curve",
+                    b.removeFromBottom(10), juce::Justification::centredRight);
+
+        // Cache segment x-ranges for drag hit-testing
+        segX[0] = x0;  segX[1] = x1;  segX[2] = x2;  segX[3] = x3;  segX[4] = x4;
+        segTopY = top; segBotY = bot; segSusY = susY;
     }
 
     void setProcessor (NovaSynthProcessor* p) { proc_ptr = p; }
 
+    // Determine which segment the mouse is over: 0=Attack 1=Decay 2=Release, -1=none
+    int hitSegment (const juce::MouseEvent& e) const
+    {
+        float x = (float) e.x;
+        if (x >= segX[0] && x < segX[1]) return 0;
+        if (x >= segX[1] && x < segX[2]) return 1;
+        if (x >= segX[3] && x < segX[4]) return 2;
+        return -1;  // sustain plateau or out of range
+    }
+
     // mouseDown requis pour recevoir les events mouseDrag dans JUCE
     void mouseDown (const juce::MouseEvent& e) override
     {
-        envDragActive = false;
+        envDragActive  = false;
+        curveDragSeg   = -1;
+        curveDragStartY = (float) e.y;
 
-        // Clic droit : menu pour reset les modulations (ENV2/ENV3 seulement)
-        if (e.mods.isRightButtonDown() && envIndex >= 1 && proc_ptr != nullptr)
+        // Right-click: contextual menu (reset curve / reset modulations)
+        if (e.mods.isRightButtonDown())
         {
-            int modIdx = envIndex + 3;  // ENV2 -> 4, ENV3 -> 5
+            int seg = hitSegment (e);
             juce::PopupMenu m;
-            m.addItem (1, "Reset modulations (ENV " + juce::String(envIndex + 1) + ")");
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                [this, modIdx](int r) {
-                    if (r == 1 && proc_ptr != nullptr)
-                        proc_ptr->clearModSource (modIdx);
-                });
+            if (seg == 0) m.addItem (10, "Reset Attack curve");
+            if (seg == 1) m.addItem (11, "Reset Decay curve");
+            if (seg == 2) m.addItem (12, "Reset Release curve");
+            if (envIndex >= 1 && proc_ptr != nullptr)
+                m.addItem (1, "Reset modulations (ENV " + juce::String(envIndex + 1) + ")");
+            if (m.containsAnyActiveItems())
+            {
+                int modIdx = envIndex + 3;
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                    [this, modIdx](int r) {
+                        if (r == 10 && apvts_ptr && curveAid.isNotEmpty())
+                            if (auto* p = apvts_ptr->getParameter (curveAid)) p->setValueNotifyingHost (p->convertTo0to1 (0.f));
+                        if (r == 11 && apvts_ptr && curveDid.isNotEmpty())
+                            if (auto* p = apvts_ptr->getParameter (curveDid)) p->setValueNotifyingHost (p->convertTo0to1 (0.f));
+                        if (r == 12 && apvts_ptr && curveRid.isNotEmpty())
+                            if (auto* p = apvts_ptr->getParameter (curveRid)) p->setValueNotifyingHost (p->convertTo0to1 (0.f));
+                        if (r == 1 && proc_ptr != nullptr)
+                            proc_ptr->clearModSource (modIdx);
+                    });
+            }
+            return;
+        }
+
+        // Left-click on a segment arms curve-drag; otherwise, on ENV2/3, arm routing-drag.
+        int seg = hitSegment (e);
+        if (seg >= 0)
+        {
+            curveDragSeg  = seg;
+            curveDragBase = (seg == 0 ? curveA : seg == 1 ? curveD : curveR);
         }
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
-        // Seuls ENV2 (index 1) et ENV3 (index 2) sont des sources de mod libres
+        // Curve adjustment drag (vertical)
+        if (curveDragSeg >= 0)
+        {
+            float dy = (curveDragStartY - (float) e.y) / 80.0f;   // 80 px = full range
+            float nv = juce::jlimit (-1.0f, 1.0f, curveDragBase + dy);
+            const juce::String& id =
+                (curveDragSeg == 0 ? curveAid : curveDragSeg == 1 ? curveDid : curveRid);
+            if (apvts_ptr && id.isNotEmpty())
+                if (auto* p = apvts_ptr->getParameter (id))
+                    p->setValueNotifyingHost (p->convertTo0to1 (nv));
+            return;
+        }
+
+        // Routing drag-and-drop (ENV2/ENV3 only)
         if (envIndex < 1) return;
         if (!envDragActive && e.getDistanceFromDragStart() > 8)
         {
@@ -1508,15 +1639,25 @@ public:
         }
     }
 
-    void mouseUp (const juce::MouseEvent&) override { envDragActive = false; }
+    void mouseUp (const juce::MouseEvent&) override {
+        envDragActive = false;
+        curveDragSeg  = -1;
+    }
 
 private:
     bool envDragActive { false };
+    int  curveDragSeg  { -1 };
+    float curveDragStartY { 0.f };
+    float curveDragBase   { 0.f };
     juce::AudioProcessorValueTreeState* apvts_ptr { nullptr };
     NovaSynthProcessor* proc_ptr { nullptr };
     std::vector<juce::String> ids;
+    juce::String curveAid, curveDid, curveRid;
     juce::Colour col;
     float attack{0.01f}, decay{0.1f}, sustain{0.7f}, release{0.3f};
+    float curveA{0.0f}, curveD{0.0f}, curveR{0.0f};
+    float segX[5] { 0,0,0,0,0 };
+    float segTopY{0.f}, segBotY{0.f}, segSusY{0.f};
 };
 
 // ============================================================
@@ -1865,8 +2006,8 @@ public:
           semi     ("SEMI",  apvts, prefix+"Tune",      colour),
           fine     ("FINE",  apvts, prefix+"Detune",    colour),
           phase    ("PHASE", apvts, prefix+"Phase",     colour),
+          randKnob ("RAND",  apvts, prefix+"RandPhase", colour),
           enableBtn("ON",    apvts, prefix+"Enabled",   colour),
-          randBtn  ("RAND",  apvts, prefix+"RandPhase", colour),
           uniView  (apvts, prefix, colour)
     {
         display.addParam (prefix+"Level",     &display.level);
@@ -1884,7 +2025,7 @@ public:
         addAndMakeVisible (level);     addAndMakeVisible (pan);
         addAndMakeVisible (oct);       addAndMakeVisible (semi);
         addAndMakeVisible (fine);      addAndMakeVisible (phase);
-        addAndMakeVisible (enableBtn); addAndMakeVisible (randBtn);
+        addAndMakeVisible (randKnob);  addAndMakeVisible (enableBtn);
 
         resetAllBtn.setButtonText (juce::String::charToString (0x21BA) + " RST");
         resetAllBtn.setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a0a18));
@@ -1907,7 +2048,7 @@ public:
         warpAmt.setProcessor(p);  uniDetune.setProcessor(p);
         uniBlend.setProcessor(p); level.setProcessor(p);
         pan.setProcessor(p);      fine.setProcessor(p);
-        phase.setProcessor(p);
+        phase.setProcessor(p);    randKnob.setProcessor(p);
     }
 
     void paint (juce::Graphics& g) override
@@ -1935,7 +2076,6 @@ public:
         {
             auto header = getLocalBounds().removeFromTop (20);
             enableBtn.setBounds   (header.removeFromRight (30).reduced (2, 2));
-            randBtn.setBounds     (header.removeFromRight (36).reduced (2, 2));
             resetAllBtn.setBounds (header.removeFromRight (44).reduced (2, 2));
         }
 
@@ -1989,15 +2129,18 @@ public:
         }
         b.removeFromTop (2);
 
-        // ---- Row 6 (remaining): UnisonDisplay + Phase (small) ----
+        // ---- Row 6 (remaining): UnisonDisplay + Phase/Rand ----
         {
-            // UnisonDisplay on top half, phase on remaining
-            int uniH = juce::jmin (16, b.getHeight() / 2);
+            // UnisonDisplay on top, then phase + rand side by side
+            int uniH = juce::jmin (16, b.getHeight() / 3);
             uniView.setBounds (b.removeFromTop (uniH));
             b.removeFromTop (2);
-            // Phase in remaining space
             if (b.getHeight() > 0)
-                phase.setBounds (b);
+            {
+                int hw = b.getWidth() / 2;
+                phase.setBounds    (b.removeFromLeft (hw));
+                randKnob.setBounds (b);
+            }
         }
     }
 
@@ -2010,9 +2153,9 @@ private:
     UnisonDisplay   uniView;
     WaveDropButton  waveBtn;
     LabelledCombo   warpCombo;
-    LabelledKnob    warpAmt, uniDetune, uniBlend, level, pan, fine, phase;
+    LabelledKnob    warpAmt, uniDetune, uniBlend, level, pan, fine, phase, randKnob;
     StepDisplay     uniVoices, oct, semi;
-    ToggleBtn       enableBtn, randBtn;
+    ToggleBtn       enableBtn;
     juce::TextButton resetAllBtn;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OscillatorPanel)
@@ -2284,6 +2427,85 @@ private:
 };
 
 // ============================================================
+//  SimpleFxRow — generic one-row FX block: title + ON + knobs
+//  Used for Chorus / Phaser / Delay / Reverb in the Serum-style rack
+// ============================================================
+class SimpleFxRow : public juce::Component
+{
+public:
+    SimpleFxRow (NovaSynthProcessor& proc,
+                 juce::AudioProcessorValueTreeState& apvts,
+                 const juce::String& title,
+                 const juce::String& enableID,
+                 std::vector<std::pair<juce::String, juce::String>> knobDefs, // {paramID, label}
+                 juce::Colour colour)
+        : proc_ (proc), apvts_ (apvts), title_ (title), enableID_ (enableID), col_ (colour)
+    {
+        enableBtn.setButtonText ("ON");
+        enableBtn.setClickingTogglesState (true);
+        enableBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour(0xff0a0a14));
+        enableBtn.setColour (juce::TextButton::buttonOnColourId, colour.withAlpha(0.45f));
+        enableBtn.setColour (juce::TextButton::textColourOffId,  colour.withAlpha(0.5f));
+        enableBtn.setColour (juce::TextButton::textColourOnId,   colour);
+        enableBtn.setToggleState (*apvts.getRawParameterValue (enableID) > 0.5f,
+                                   juce::dontSendNotification);
+        enableBtn.onClick = [this] {
+            float v = enableBtn.getToggleState() ? 1.0f : 0.0f;
+            if (auto* p = apvts_.getParameter (enableID_))
+                p->setValueNotifyingHost (v);
+        };
+        addAndMakeVisible (enableBtn);
+
+        for (auto& def : knobDefs)
+        {
+            auto k = std::make_unique<LabelledKnob> (def.second, apvts, def.first, colour);
+            k->setProcessor (&proc_);
+            addAndMakeVisible (*k);
+            knobs.push_back (std::move (k));
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto b = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (juce::Colour(0xff07070f));
+        g.fillRoundedRectangle (b, 4.0f);
+        g.setColour (col_.withAlpha (0.22f));
+        g.drawRoundedRectangle (b.reduced(0.5f), 4.0f, 1.0f);
+
+        g.setColour (col_);
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        g.drawText (title_, b.removeFromTop (16.0f).withTrimmedLeft(8.0f),
+                    juce::Justification::centredLeft);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        b.removeFromTop (16);   // title
+        auto row = b.reduced (4, 2);
+        int onW = 36;
+        enableBtn.setBounds (row.removeFromLeft (onW).reduced (2, 4));
+        if (!knobs.empty())
+        {
+            int kw = row.getWidth() / (int) knobs.size();
+            for (auto& k : knobs)
+                k->setBounds (row.removeFromLeft (kw));
+        }
+    }
+
+private:
+    NovaSynthProcessor&                  proc_;
+    juce::AudioProcessorValueTreeState&  apvts_;
+    juce::String                         title_, enableID_;
+    juce::Colour                         col_;
+    juce::TextButton                     enableBtn;
+    std::vector<std::unique_ptr<LabelledKnob>> knobs;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SimpleFxRow)
+};
+
+// ============================================================
 //  CompTransferCurveDisplay — compressor transfer curve (Serum OTT style)
 //  Shows the input→output gain mapping for one band.
 //  X axis: input level (dB, -60 to 0)
@@ -2440,9 +2662,9 @@ public:
         , driveAmt    ("DRIVE", apvts, "driveAmount",   NS_GREEN)
         , driveMix    ("MIX",   apvts, "driveMix",      NS_GREEN)
     {
-        // Sidebar buttons: COMP, DIST, EQ, REV, DLY
-        static const char* fxNames[5] = { "COMP", "DIST", "EQ", "REV", "DLY" };
-        for (int i = 0; i < 5; ++i)
+        // Sidebar buttons: COMP, DIST, CHOR, PHAS, DLY, REV
+        static const char* fxNames[6] = { "COMP", "DIST", "CHOR", "PHAS", "DLY", "REV" };
+        for (int i = 0; i < 6; ++i)
         {
             sideBtn[i].setButtonText (fxNames[i]);
             sideBtn[i].setClickingTogglesState (false);
@@ -2579,6 +2801,32 @@ public:
         driveAmt.setProcessor (&proc);
         driveMix.setProcessor (&proc);
 
+        // Build new FX rows (Chorus / Phaser / Delay / Reverb)
+        chorusRow = std::make_unique<SimpleFxRow> (proc, apvts, "CHORUS", "chorusEnabled",
+            std::vector<std::pair<juce::String, juce::String>>{
+                {"chorusRate","RATE"}, {"chorusDepth","DEPTH"},
+                {"chorusFeedback","FB"}, {"chorusMix","MIX"}
+            }, NS_ACCENT);
+        phaserRow = std::make_unique<SimpleFxRow> (proc, apvts, "PHASER", "phaserEnabled",
+            std::vector<std::pair<juce::String, juce::String>>{
+                {"phaserRate","RATE"}, {"phaserDepth","DEPTH"},
+                {"phaserCentre","FREQ"}, {"phaserFeedback","FB"}, {"phaserMix","MIX"}
+            }, NS_ACCENT);
+        delayRow = std::make_unique<SimpleFxRow> (proc, apvts, "DELAY", "delayEnabled",
+            std::vector<std::pair<juce::String, juce::String>>{
+                {"delayTime","TIME"}, {"delayFeedback","FB"},
+                {"delayMix","MIX"}, {"delayPingPong","PING"}, {"delaySync","SYNC"}
+            }, NS_ACCENT);
+        reverbRow = std::make_unique<SimpleFxRow> (proc, apvts, "REVERB", "reverbEnabled",
+            std::vector<std::pair<juce::String, juce::String>>{
+                {"reverbSize","SIZE"}, {"reverbDamp","DAMP"},
+                {"reverbWidth","WIDTH"}, {"reverbMix","MIX"}, {"reverbFreeze","FRZ"}
+            }, NS_ACCENT);
+        addAndMakeVisible (*chorusRow);
+        addAndMakeVisible (*phaserRow);
+        addAndMakeVisible (*delayRow);
+        addAndMakeVisible (*reverbRow);
+
         selectFx (0);
         startTimerHz (30);
     }
@@ -2587,15 +2835,12 @@ public:
 
     void timerCallback() override
     {
-        // Update transfer curve when drive params change
-        if (selectedFx == 1)
+        // Always update both transfer curves (both FX always visible)
         {
             int   mode  = (int)*proc.apvts.getRawParameterValue ("driveMode");
             float amt   = *proc.apvts.getRawParameterValue ("driveAmount");
             transferCurve.setParams (mode, amt);
         }
-        // Update compressor transfer curve with current band params
-        if (selectedFx == 0)
         {
             static const char* thrIds[3]  = {"compLowThresh","compMidThresh","compHiThresh"};
             static const char* ratIds[3]  = {"compLowRatio", "compMidRatio", "compHiRatio"};
@@ -2636,12 +2881,16 @@ public:
         g.setColour (NS_ORANGE.withAlpha (0.20f));
         g.drawRoundedRectangle (content.reduced(0.5f), 5.0f, 1.0f);
 
-        if (selectedFx == 0)
-            paintCompressor (g, content);
-        else if (selectedFx == 1)
-            paintDriveHeader (g, content);
-        else
-            paintComingSoon (g, content);
+        // Serum-style FX rack: stack all effects vertically, all visible
+        // Proportions: COMP 35%, DIST 15%, then 4 × ~12% for the modulation FX
+        float totalH  = content.getHeight();
+        auto compArea  = content.removeFromTop (totalH * 0.35f);
+        content.removeFromTop (3.0f);
+        auto driveArea = content.removeFromTop (totalH * 0.17f);
+        content.removeFromTop (3.0f);
+        // chorus/phaser/delay/reverb rows handled by their Components' own paint
+        paintCompressor  (g, compArea);
+        paintDriveHeader (g, driveArea);
     }
 
     void resized() override
@@ -2650,80 +2899,81 @@ public:
         const int top = 28;
 
         auto sidebar = getLocalBounds().withTrimmedTop (top).withWidth (sideW).reduced (6, 6);
-        int bh = 28;
-        for (int i = 0; i < 5; ++i)
+        int bh = 26;
+        for (int i = 0; i < 6; ++i)
             sideBtn[i].setBounds (sidebar.removeFromTop (bh).reduced (0, 2));
 
         auto content = getLocalBounds().withTrimmedTop (top).withTrimmedLeft (sideW + 8).reduced (6, 6);
 
-        // Hide all widgets first
-        compEnableBtn.setBounds ({});
-        driveEnableBtn.setBounds ({});
-        drivePrev.setBounds ({});
-        driveNext.setBounds ({});
-        transferCurve.setBounds ({});
-        for (auto* k : { &compInGain, &compOutGain, &compMix, &compUpward, &compDepth,
-                          &loThresh, &loRatio, &loGain,
-                          &midThresh, &midRatio, &midGain,
-                          &hiThresh,  &hiRatio,  &hiGain })
-            k->setBounds ({});
-        driveAmt.setBounds ({});
-        driveMix.setBounds ({});
-        for (int i = 0; i < 8; ++i) driveModeBtn[i].setBounds ({});
+        // Split content: COMP 35%, DIST 17%, chorus/phaser/delay/reverb each ~12%
+        int totalH     = content.getHeight();
+        auto compArea  = content.removeFromTop ((int)(totalH * 0.35));
+        content.removeFromTop (3);
+        auto driveArea = content.removeFromTop ((int)(totalH * 0.17));
+        content.removeFromTop (3);
+        int rowH = content.getHeight() / 4;
+        if (chorusRow) chorusRow->setBounds (content.removeFromTop (rowH).reduced (0, 1));
+        if (phaserRow) phaserRow->setBounds (content.removeFromTop (rowH).reduced (0, 1));
+        if (delayRow)  delayRow ->setBounds (content.removeFromTop (rowH).reduced (0, 1));
+        if (reverbRow) reverbRow->setBounds (content.reduced (0, 1));
 
-        if (selectedFx == 0) // COMP
+        // ==== COMP section (top ~55%) ====
         {
+            auto c = compArea;
+            c.removeFromTop (18);  // title space (painted)
             // Header: [ON] [DEPTH] [IN] [OUT] [MIX] [OTT]
-            auto header = content.removeFromTop (52);
+            auto header = c.removeFromTop (44);
             int hkw = header.getWidth() / 6;
-            compEnableBtn.setBounds (header.removeFromLeft (hkw).reduced (4, 8));
+            compEnableBtn.setBounds (header.removeFromLeft (hkw).reduced (4, 6));
             compDepth.setBounds     (header.removeFromLeft (hkw));
             compInGain.setBounds    (header.removeFromLeft (hkw));
             compOutGain.setBounds   (header.removeFromLeft (hkw));
             compMix.setBounds       (header.removeFromLeft (hkw));
             compUpward.setBounds    (header);
-            content.removeFromTop (6);
+            c.removeFromTop (4);
 
-            // Animated meter bands: 40% of remaining height
-            int meterH = content.getHeight() * 40 / 100;
-            content.removeFromTop ((float)meterH);  // painted only
-            content.removeFromTop (4);
+            // Animated meter bands: 42% of remaining (painted)
+            int meterH = c.getHeight() * 42 / 100;
+            c.removeFromTop (meterH);
+            c.removeFromTop (3);
 
-            // Band knob rows: LO | MID | HI — each column has THR, RATIO, GAIN
-            int bw = content.getWidth() / 3;
-            auto lo  = content.withWidth (bw).reduced (2, 2);
-            auto mid = content.withX (content.getX() + bw).withWidth (bw).reduced (2, 2);
-            auto hi  = content.withX (content.getX() + bw*2).withWidth (bw).reduced (2, 2);
-            lo.removeFromTop (18); mid.removeFromTop (18); hi.removeFromTop (18);
+            // Band knob rows: LO | MID | HI
+            int bw = c.getWidth() / 3;
+            auto lo  = c.withWidth (bw).reduced (2, 2);
+            auto mid = c.withX (c.getX() + bw).withWidth (bw).reduced (2, 2);
+            auto hi  = c.withX (c.getX() + bw*2).withWidth (bw).reduced (2, 2);
+            lo.removeFromTop (14); mid.removeFromTop (14); hi.removeFromTop (14);
             int kw3 = lo.getWidth() / 3;
             loThresh.setBounds  (lo.removeFromLeft(kw3));  loRatio.setBounds  (lo.removeFromLeft(kw3));  loGain.setBounds  (lo);
             midThresh.setBounds (mid.removeFromLeft(kw3)); midRatio.setBounds (mid.removeFromLeft(kw3)); midGain.setBounds (mid);
             hiThresh.setBounds  (hi.removeFromLeft(kw3));  hiRatio.setBounds  (hi.removeFromLeft(kw3));  hiGain.setBounds  (hi);
         }
-        else if (selectedFx == 1) // DIST
+
+        // ==== DIST section (bottom ~45%) ====
         {
-            // Header row: [ON] [< >]
-            auto header = content.removeFromTop (36);
+            auto c = driveArea;
+            c.removeFromTop (18);  // title space (painted)
+            // Header: [ON] [< >]
+            auto header = c.removeFromTop (28);
             driveEnableBtn.setBounds (header.removeFromLeft (44).reduced (2, 4));
             drivePrev.setBounds      (header.removeFromLeft (24).reduced (2, 4));
             driveNext.setBounds      (header.removeFromRight(24).reduced (2, 4));
-            content.removeFromTop (4);
+            c.removeFromTop (3);
 
             // Drive mode selector row: 8 buttons
-            auto modeRow = content.removeFromTop (28);
+            auto modeRow = c.removeFromTop (22);
             int btnW = modeRow.getWidth() / 8;
             for (int i = 0; i < 8; ++i)
                 driveModeBtn[i].setBounds (modeRow.removeFromLeft (btnW).reduced (2, 2));
-            content.removeFromTop (6);
+            c.removeFromTop (4);
 
             // Transfer curve: left 60%, knobs: right 40%
-            auto curveArea = content.removeFromLeft (content.getWidth() * 6 / 10);
+            auto curveArea = c.removeFromLeft (c.getWidth() * 6 / 10);
             transferCurve.setBounds (curveArea.reduced (4));
 
-            // Knobs on right
-            int kh = content.getHeight() / 2;
-            driveAmt.setBounds (content.removeFromTop (kh).reduced (4, 4));
-            driveMix.setBounds (content.reduced (4, 4));
+            int kh = c.getHeight() / 2;
+            driveAmt.setBounds (c.removeFromTop (kh).reduced (4, 4));
+            driveMix.setBounds (c.reduced (4, 4));
         }
     }
 
@@ -2731,7 +2981,7 @@ private:
     void selectFx (int idx)
     {
         selectedFx = idx;
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
         {
             bool active = (i == idx);
             sideBtn[i].setColour (juce::TextButton::buttonColourId,
@@ -2739,21 +2989,7 @@ private:
             sideBtn[i].setColour (juce::TextButton::textColourOffId,
                 active ? NS_ORANGE : juce::Colour(0xff5060a0));
         }
-        bool showComp  = (idx == 0);
-        bool showDrive = (idx == 1);
-        compEnableBtn.setVisible  (showComp);
-        driveEnableBtn.setVisible (showDrive);
-        drivePrev.setVisible      (showDrive);
-        driveNext.setVisible      (showDrive);
-        transferCurve.setVisible  (showDrive);
-        driveAmt.setVisible       (showDrive);
-        driveMix.setVisible       (showDrive);
-        for (int i = 0; i < 8; ++i) driveModeBtn[i].setVisible (showDrive);
-        for (auto* k : { &compInGain, &compOutGain, &compMix, &compUpward, &compDepth,
-                          &loThresh, &loRatio, &loGain,
-                          &midThresh, &midRatio, &midGain,
-                          &hiThresh,  &hiRatio,  &hiGain })
-            k->setVisible (showComp);
+        // Serum-style rack: all FX widgets always visible; sidebar only highlights selection
         resized();
         repaint();
     }
@@ -2888,7 +3124,7 @@ private:
 
     NovaSynthProcessor&   proc;
     int                   selectedFx { 0 };
-    juce::TextButton      sideBtn[5];
+    juce::TextButton      sideBtn[6];
     // Compressor
     juce::TextButton         compEnableBtn;
     LabelledKnob             compInGain, compOutGain, compMix, compUpward, compDepth;
@@ -2905,6 +3141,9 @@ private:
     juce::TextButton      driveModeBtn[8];
     TransferCurveDisplay  transferCurve;
     LabelledKnob          driveAmt, driveMix;
+
+    // Chorus / Phaser / Delay / Reverb rows
+    std::unique_ptr<SimpleFxRow> chorusRow, phaserRow, delayRow, reverbRow;
 
     void updateDriveModeButtons (juce::AudioProcessorValueTreeState& apvts)
     {

@@ -81,8 +81,8 @@ struct Oscillator
     float pan   { 0.0f };  // -1..+1
 
     // --- Phase ---
-    float initPhase { 0.0f };  // 0..1
-    bool  randPhase { false };
+    float initPhase { 0.0f };  // 0..1  start phase
+    float randPhase { 0.0f };  // 0..1  random amount (0=deterministic, 1=fully random)
 
     // --- On/Off ---
     bool enabled { true };
@@ -97,9 +97,10 @@ struct Oscillator
 
     void reset()
     {
-        float start = randPhase
-            ? juce::Random::getSystemRandom().nextFloat()
-            : initPhase;
+        // Serum-style: initPhase is the base, randPhase scales a random offset on top
+        float rnd   = juce::Random::getSystemRandom().nextFloat();  // 0..1
+        float start = initPhase + randPhase * rnd;
+        start = start - std::floor (start);   // wrap to 0..1
 
         for (int v = 0; v < 8; ++v)
             phases[v] = std::fmod (start + (float)v * 0.05f, 1.0f);
@@ -124,43 +125,94 @@ struct ADSREnvelope
     float sustain { 0.70f };
     float release { 0.30f };
 
+    // Serum-style per-segment curves: -1 = exp fast-slow, 0 = linear, +1 = log slow-fast
+    float curveA { 0.0f }, curveD { 0.0f }, curveR { 0.0f };
+
     enum class Stage { Idle, Attack, Decay, Sustain, Release };
     Stage stage        { Stage::Idle };
     float currentLevel { 0.0f };
     float sampleRate   { 44100.0f };
 
-    void noteOn()  { stage = Stage::Attack; }
-    void noteOff() { if (stage != Stage::Idle) { releaseStartLevel = currentLevel; stage = Stage::Release; } }
+    void noteOn()  { stage = Stage::Attack; stagePhase = 0.0f; }
+    void noteOff() {
+        if (stage != Stage::Idle) {
+            releaseStartLevel = currentLevel;
+            stage = Stage::Release;
+            stagePhase = 0.0f;
+        }
+    }
     bool isActive() const { return stage != Stage::Idle; }
+
+    // Atan-based tension curve: c<0 ease-in, c>0 ease-out (same shape as LFO points)
+    static float shapeCurve (float t, float c)
+    {
+        if (std::abs (c) < 1e-3f) return t;
+        float k = c * 6.0f;
+        float a0 = std::atan (k * -0.5f);
+        float a1 = std::atan (k *  0.5f);
+        float denom = a1 - a0;
+        if (std::abs (denom) < 1e-6f) return t;
+        return (std::atan (k * (t - 0.5f)) - a0) / denom;
+    }
 
     float process()
     {
         switch (stage)
         {
-            case Stage::Idle: currentLevel = 0.0f; break;
+            case Stage::Idle:
+                currentLevel = 0.0f;
+                break;
+
             case Stage::Attack: {
-                currentLevel += 1.0f / (attack * sampleRate);
-                if (currentLevel >= 1.0f) { currentLevel = 1.0f; stage = Stage::Decay; }
-                break; }
+                float dt = 1.0f / juce::jmax (1e-4f, attack * sampleRate);
+                stagePhase += dt;
+                if (stagePhase >= 1.0f) {
+                    currentLevel = 1.0f;
+                    stage = Stage::Decay;
+                    stagePhase = 0.0f;
+                } else {
+                    currentLevel = shapeCurve (stagePhase, curveA);
+                }
+                break;
+            }
+
             case Stage::Decay: {
-                currentLevel -= (1.0f - sustain) / (decay * sampleRate);
-                if (currentLevel <= sustain) { currentLevel = sustain; stage = Stage::Sustain; }
-                break; }
-            case Stage::Sustain: currentLevel = sustain; break;
+                float dt = 1.0f / juce::jmax (1e-4f, decay * sampleRate);
+                stagePhase += dt;
+                if (stagePhase >= 1.0f) {
+                    currentLevel = sustain;
+                    stage = Stage::Sustain;
+                    stagePhase = 0.0f;
+                } else {
+                    float s = shapeCurve (stagePhase, curveD);
+                    currentLevel = 1.0f - s * (1.0f - sustain);
+                }
+                break;
+            }
+
+            case Stage::Sustain:
+                currentLevel = sustain;
+                break;
+
             case Stage::Release: {
-                // Décroit depuis le niveau au moment du note-off (fix: sustain=0 jouait à l'infini)
-                float rate = (release * sampleRate > 0.f)
-                             ? releaseStartLevel / (release * sampleRate)
-                             : releaseStartLevel;
-                currentLevel -= rate;
-                if (currentLevel <= 0.0f) { currentLevel = 0.0f; stage = Stage::Idle; }
-                break; }
+                float dt = 1.0f / juce::jmax (1e-4f, release * sampleRate);
+                stagePhase += dt;
+                if (stagePhase >= 1.0f) {
+                    currentLevel = 0.0f;
+                    stage = Stage::Idle;
+                } else {
+                    float s = shapeCurve (stagePhase, curveR);
+                    currentLevel = releaseStartLevel * (1.0f - s);
+                }
+                break;
+            }
         }
         return currentLevel;
     }
 
 private:
     float releaseStartLevel { 0.0f };
+    float stagePhase        { 0.0f };
 };
 
 // ============================================================
@@ -169,7 +221,10 @@ private:
 // ============================================================
 struct SVFilter
 {
-    enum class Type { LP6=0, LP12=1, LP24=2, HP12=3, HP24=4, BP=5, Notch=6, Comb=7 };
+    enum class Type {
+        LP6=0, LP12=1, LP24=2, HP12=3, HP24=4, BP=5, Notch=6, Comb=7,
+        BP24=8, Notch24=9, LowShelf=10, HighShelf=11, PeakEQ=12
+    };
 
     float s1{0}, s2{0};   // état 1ère passe
     float s1b{0}, s2b{0}; // état 2ème passe (pour LP24 / HP24)
@@ -230,6 +285,43 @@ struct SVFilter
                 float out = in + combFeedback * feedback;
                 combFeedback = out;
                 return out * 0.5f;
+            }
+            case Type::BP24: {
+                // 2ème passe BP pour 24dB/oct (plus résonnant, plus étroit)
+                float v3b = bp - s2b;
+                float v1b = a1 * s1b + a2 * v3b;
+                float v2b = s2b + a2 * s1b + a3 * v3b;
+                s1b = 2.0f * v1b - s1b;
+                s2b = 2.0f * v2b - s2b;
+                return v1b;
+            }
+            case Type::Notch24: {
+                // 2ème passe Notch
+                float v3b = nt - s2b;
+                float v1b = a1 * s1b + a2 * v3b;
+                float v2b = s2b + a2 * s1b + a3 * v3b;
+                s1b = 2.0f * v1b - s1b;
+                s2b = 2.0f * v2b - s2b;
+                float ntb = nt - k * v1b;
+                return ntb;
+            }
+            case Type::LowShelf: {
+                // Low shelf: boost/cut below cutoff.
+                // Resonance knob maps to gain: 0 → -12dB, 0.5 → 0dB, 1 → +12dB
+                float gainDb = (res - 0.5f) * 24.0f;
+                float A = std::pow (10.0f, gainDb / 40.0f);   // shelf scaling
+                return in + (A - 1.0f) * lp + (1.0f/A - 1.0f) * hp * 0.0f;
+            }
+            case Type::HighShelf: {
+                float gainDb = (res - 0.5f) * 24.0f;
+                float A = std::pow (10.0f, gainDb / 40.0f);
+                return in + (A - 1.0f) * hp;
+            }
+            case Type::PeakEQ: {
+                // Peak/bell: resonance doubles as gain (0.5 = flat, 1 = +12dB, 0 = -12dB)
+                float gainDb = (res - 0.5f) * 24.0f;
+                float A = std::pow (10.0f, gainDb / 20.0f);
+                return in + (A - 1.0f) * bp;
             }
         }
         return lp;

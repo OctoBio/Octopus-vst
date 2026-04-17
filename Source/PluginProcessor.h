@@ -112,8 +112,9 @@ private:
 
     // Per-band, per-channel gain-smoothing envelope state for the OTT algorithm
     // [band][channel]:  0 = low, 1 = mid, 2 = high
-    float compEnvDown[3][2] { {1.f,1.f}, {1.f,1.f}, {1.f,1.f} };
-    float compEnvUp  [3][2] { {1.f,1.f}, {1.f,1.f}, {1.f,1.f} };
+    // State stored in dB (0 dB = unity). Log-domain smoothing for clean GR.
+    float compEnvDown[3][2] { {0.f,0.f}, {0.f,0.f}, {0.f,0.f} };
+    float compEnvUp  [3][2] { {0.f,0.f}, {0.f,0.f}, {0.f,0.f} };
 
     // Overdrive
     juce::dsp::Oversampling<float> driveOversampler {
@@ -122,6 +123,18 @@ private:
     float driveDcY[2] {0.f, 0.f};
     float driveHoldSample[2] {0.f, 0.f};
     float driveHoldPhase[2]  {0.f, 0.f};
+
+    // Modulation FX
+    juce::dsp::Chorus<float>                             chorusFx;
+    juce::dsp::Phaser<float>                             phaserFx;
+
+    // Delay (stereo, with ping-pong)
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>
+        delayLineL { 192000 }, delayLineR { 192000 };
+    float delayFbStateL { 0.f }, delayFbStateR { 0.f };
+
+    // Reverb
+    juce::dsp::Reverb                                    reverbFx;
 
     void updateVoiceParameters();
     float getModdedParam (const juce::String& id);

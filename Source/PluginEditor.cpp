@@ -37,7 +37,8 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
 
     // ---- ENV 1 ----
     envDisplay[0] = std::make_unique<AdsrDisplay> (apvts,
-        "attack","decay","sustain","release", NS_CYAN);
+        "attack","decay","sustain","release", NS_CYAN,
+        "env1CurveA","env1CurveD","env1CurveR");
     envDisplay[0]->envIndex = 0;
 
     static const char* e1ids[4]  = { "attack","decay","sustain","release" };
@@ -50,7 +51,8 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
 
     // ---- ENV 2 ----
     envDisplay[1] = std::make_unique<AdsrDisplay> (apvts,
-        "env2Attack","env2Decay","env2Sustain","env2Release", NS_ORANGE);
+        "env2Attack","env2Decay","env2Sustain","env2Release", NS_ORANGE,
+        "env2CurveA","env2CurveD","env2CurveR");
     envDisplay[1]->envIndex = 1;
 
     static const char* e2ids[4] = { "env2Attack","env2Decay","env2Sustain","env2Release" };
@@ -62,7 +64,8 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
 
     // ---- ENV 3 ----
     envDisplay[2] = std::make_unique<AdsrDisplay> (apvts,
-        "env3Attack","env3Decay","env3Sustain","env3Release", NS_GREEN);
+        "env3Attack","env3Decay","env3Sustain","env3Release", NS_GREEN,
+        "env3CurveA","env3CurveD","env3CurveR");
     envDisplay[2]->envIndex = 2;
 
     static const char* e3ids[4] = { "env3Attack","env3Decay","env3Sustain","env3Release" };
@@ -130,7 +133,8 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
                 if (v < 1.0) return juce::String (v, 2) + " Hz";
                 return juce::String (v, 1) + " Hz";
             };
-            // When sync is on, also push div index to the SyncDiv param
+            // When sync is on, snap the RATE knob to 9 discrete musical divisions
+            // AND push the div index to the SyncDiv param.
             s.onValueChange = [this, i, syncID, divID]()
             {
                 if (lfoRateKnob[i]) lfoRateKnob[i]->repaint();
@@ -142,6 +146,12 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
                     int    d = juce::jlimit (0, 8, (int)std::round (n * 8.0));
                     if (auto* p = this->apvts.getParameter (divID))
                         p->setValueNotifyingHost (p->convertTo0to1 ((float)d));
+
+                    // Snap the slider visually to the exact discrete position
+                    double snapNorm  = (double)d / 8.0;
+                    double snapValue = sl.getNormalisableRange().convertFrom0to1 (snapNorm);
+                    if (std::abs (sl.getValue() - snapValue) > 1e-5)
+                        sl.setValue (snapValue, juce::sendNotificationSync);
                 }
             };
         }
@@ -398,7 +408,10 @@ NovaSynthEditor::NovaSynthEditor (NovaSynthProcessor& p)
       osc2Panel   (p.apvts, 2, NS_PINK),
       osc3Panel   (p.apvts, 3, NS_CYAN),
       filterCurve (p.apvts),
-      filterType   ("TYPE",   p.apvts, "filterType", {"LP 6","LP 12","LP 24","HP 12","HP 24","BP","Notch","Comb"}),
+      filterType   ("TYPE",   p.apvts, "filterType", {
+          "LP 6","LP 12","LP 24","HP 12","HP 24","BP 12","Notch","Comb",
+          "BP 24","Notch 24","Low Shelf","High Shelf","Peak EQ"
+      }),
       filterCutoff ("CUT",    p.apvts, "filterCutoff", NS_GREEN),
       filterRes    ("RES",    p.apvts, "filterRes",    NS_GREEN),
       filterEnvAmt ("ENV",    p.apvts, "filterEnvAmt", NS_ORANGE),
