@@ -154,8 +154,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
 
     // ---- Multiband Compressor ----
     params.push_back (pFloat ("compEnabled",   "Comp On",      0.0f,  1.0f,  0.0f));
-    params.push_back (pFloat ("compInGain",    "Comp In",     -12.0f, 24.0f, 0.0f));
-    params.push_back (pFloat ("compOutGain",   "Comp Out",    -12.0f, 12.0f, 0.0f));
+    params.push_back (pFloat ("compInGain",    "Comp In",     -12.0f, 12.0f, 0.0f));
+    params.push_back (pFloat ("compOutGain",   "Comp Out",    -12.0f,  6.0f, 0.0f));
     params.push_back (pFloat ("compLowThresh", "Comp Lo Thr", -60.0f, 0.0f, -20.0f));
     params.push_back (pFloat ("compMidThresh", "Comp Mi Thr", -60.0f, 0.0f, -20.0f));
     params.push_back (pFloat ("compHiThresh",  "Comp Hi Thr", -60.0f, 0.0f, -20.0f));
@@ -167,9 +167,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
 
     // ---- Compressor additions ----
     params.push_back (pFloat ("compDepth",   "Comp Depth",    0.0f, 1.0f, 1.0f));
-    params.push_back (pFloat ("compLowGain", "Comp Lo Gain", -12.0f, 12.0f, 0.0f));
-    params.push_back (pFloat ("compMidGain", "Comp Mid Gain",-12.0f, 12.0f, 0.0f));
-    params.push_back (pFloat ("compHiGain",  "Comp Hi Gain", -12.0f, 12.0f, 0.0f));
+    params.push_back (pFloat ("compLowGain", "Comp Lo Gain", -12.0f, 6.0f, 0.0f));
+    params.push_back (pFloat ("compMidGain", "Comp Mid Gain",-12.0f, 6.0f, 0.0f));
+    params.push_back (pFloat ("compHiGain",  "Comp Hi Gain", -12.0f, 6.0f, 0.0f));
 
     // ---- Overdrive / Distortion ----
     params.push_back (pFloat  ("driveEnabled", "Drive On",   0.0f, 1.0f, 0.0f));
@@ -936,16 +936,26 @@ void NovaSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Limiteur soft tanh — évite le clip dur (artefacts) sur les buffers de sortie
+    // Limiteur de sortie : soft saturation (tanh) + hard cap à ±0.98
+    // Garantit qu'aucun sample ne dépasse jamais ±1.0 (pas de clip numérique).
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
     {
         auto* data = buffer.getWritePointer (ch);
         for (int i = 0; i < numSamples; ++i)
         {
             float x = data[i];
-            // Soft knee à ±0.85 : laisse passer proprement, écrête doucement
-            if (x > 0.85f || x < -0.85f)
-                data[i] = std::tanh (x * 0.9f) * 1.05f;
+            // Soft knee : linéaire jusqu'à ±0.7, puis saturation progressive
+            float ax = std::abs (x);
+            if (ax > 0.7f)
+            {
+                float sign = x < 0.0f ? -1.0f : 1.0f;
+                // tanh mappe [0.7..inf] vers [0.7..~0.98] de façon douce
+                float over = ax - 0.7f;
+                float sat  = 0.28f * std::tanh (over * 3.5f);
+                x = sign * (0.7f + sat);
+            }
+            // Hard cap de sécurité absolu
+            data[i] = juce::jlimit (-0.98f, 0.98f, x);
         }
     }
 }
