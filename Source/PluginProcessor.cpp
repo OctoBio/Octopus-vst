@@ -302,7 +302,7 @@ void NovaSynthProcessor::updateVoiceParameters()
         v->filterCutoff    = P("filterCutoff");
         v->filterResonance = P("filterRes");
         v->filterType      = static_cast<SVFilter::Type>((int)PARAM("filterType"));
-        v->filterEnvAmount = PARAM("filterEnvAmt");
+        v->filterEnvAmount = P("filterEnvAmt");
         v->filterDrive     = P("filterDrive");
         v->filterFat       = P("filterFat");
         v->filterMix       = P("filterMix");
@@ -322,7 +322,7 @@ void NovaSynthProcessor::updateVoiceParameters()
             v->portaCoeff = 0.0f;
 
         // Sub
-        v->subLevel   = PARAM("subLevel");
+        v->subLevel   = P("subLevel");
         v->subWave    = (int)PARAM("subWave");
         v->subOctave  = (int)std::round(PARAM("subOct"));
         v->subEnabled = PARAM("subEnabled") > 0.5f;

@@ -309,7 +309,7 @@ public:
         // Hint
         g.setColour (NS_TEXT2.withAlpha (0.45f));
         g.setFont (juce::FontOptions (8.0f));
-        g.drawText ("click: add  |  dbl-click: remove  |  diamond: curve  |  right-click: menu",
+        g.drawText ("drag: draw  |  click: add pt  |  dbl-click: remove  |  alt+drag: route  |  right-click: menu",
                     b.removeFromBottom(12), juce::Justification::centred);
     }
 
@@ -318,17 +318,31 @@ public:
         dragPtIdx    = -1;
         curveDragIdx = -1;
         lfoRouteDrag = false;
+        freehandDraw = false;
         if (e.mods.isRightButtonDown())
         {
             showContextMenu();
             return;
         }
         auto b = getLocalBounds().toFloat().reduced (1.5f);
+
+        // Alt+drag (or middle-button drag) → LFO routing drag
+        if (e.mods.isAltDown())
+        {
+            lfoRouteDrag = true;
+            startLfoRoutingDrag();
+            return;
+        }
+
         // Check curve handles first
         int ci = findNearestCurveHandle (e.position.toFloat(), b);
         if (ci >= 0) { curveDragIdx = ci; curveDragStart = points[ci].curve; return; }
         // Then control points
         dragPtIdx = findNearest (e.position.toFloat(), b);
+
+        // If not near any existing point → freehand draw mode
+        if (dragPtIdx < 0)
+            freehandDraw = true;
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
@@ -362,33 +376,53 @@ public:
             repaint();
             return;
         }
-        // Drag depuis une zone vide → source LFO routing
-        if (!lfoRouteDrag && e.getDistanceFromDragStart() > 8)
+        // Freehand drawing: place/update points along the drag path
+        if (freehandDraw)
+        {
+            auto [nx, ny] = screenToNorm (e.position.toFloat(), b);
+            nx = juce::jlimit (0.0f, 1.0f, nx);
+            ny = juce::jlimit (-1.f, 1.f, ny);
+            // Find if there's already a point close in X → update it
+            const float xTol = 0.03f;
+            bool updated = false;
+            for (auto& pt : points)
+            {
+                if (std::abs (pt.x - nx) < xTol && pt.x > 0.005f && pt.x < 0.995f)
+                {
+                    pt.y = ny;
+                    updated = true;
+                    break;
+                }
+            }
+            if (!updated)
+            {
+                // Don't add at the very edges (those are fixed anchor points)
+                if (nx > 0.005f && nx < 0.995f)
+                {
+                    LfoPoint np { nx, ny, 0.f };
+                    addPointSorted (np);
+                }
+            }
+            pushToProcessor();
+            repaint();
+            return;
+        }
+        // Alt+drag from non-point area → LFO routing drag
+        if (!lfoRouteDrag && e.mods.isAltDown() && e.getDistanceFromDragStart() > 8)
         {
             lfoRouteDrag = true;
-            if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor (this))
-            {
-                juce::Image img (juce::Image::ARGB, 50, 20, true);
-                juce::Graphics ig (img);
-                ig.setColour (col.withAlpha (0.92f));
-                ig.fillRoundedRectangle (1.f, 1.f, 48.f, 18.f, 4.f);
-                ig.setColour (juce::Colours::white);
-                ig.setFont (juce::FontOptions (9.f, juce::Font::bold));
-                ig.drawText ("LFO " + juce::String(lfoIndex+1),
-                             juce::Rectangle<int>(0,3,50,14), juce::Justification::centred);
-                dc->startDragging ("LFO:" + juce::String(lfoIndex), this,
-                                   juce::ScaledImage(img), false);
-            }
+            startLfoRoutingDrag();
         }
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
         auto b = getLocalBounds().toFloat().reduced (1.5f);
-        // Clic simple sur zone vide → ajouter un point
+        // Single click on empty space (no drag, no freehand) → add a point
         if (!e.mods.isRightButtonDown()
             && !e.mouseWasDraggedSinceMouseDown()
-            && dragPtIdx < 0)
+            && dragPtIdx < 0
+            && !freehandDraw)
         {
             auto [nx, ny] = screenToNorm (e.position.toFloat(), b);
             LfoPoint np { juce::jlimit(0.01f, 0.99f, nx), juce::jlimit(-1.f, 1.f, ny) };
@@ -396,9 +430,18 @@ public:
             pushToProcessor();
             repaint();
         }
+        // After freehand draw: sort points by x
+        if (freehandDraw)
+        {
+            std::sort (points.begin(), points.end(),
+                       [](const LfoPoint& a, const LfoPoint& b2) { return a.x < b2.x; });
+            pushToProcessor();
+            repaint();
+        }
         dragPtIdx    = -1;
         curveDragIdx = -1;
         lfoRouteDrag = false;
+        freehandDraw = false;
     }
 
     void mouseDoubleClick (const juce::MouseEvent& e) override
@@ -466,6 +509,24 @@ private:
     float curveDragStart { 0.0f };
     bool lfoRouteDrag { false };
     bool lfoPaused    { false };
+    bool freehandDraw { false };
+
+    void startLfoRoutingDrag()
+    {
+        if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor (this))
+        {
+            juce::Image img (juce::Image::ARGB, 50, 20, true);
+            juce::Graphics ig (img);
+            ig.setColour (col.withAlpha (0.92f));
+            ig.fillRoundedRectangle (1.f, 1.f, 48.f, 18.f, 4.f);
+            ig.setColour (juce::Colours::white);
+            ig.setFont (juce::FontOptions (9.f, juce::Font::bold));
+            ig.drawText ("LFO " + juce::String(lfoIndex+1),
+                         juce::Rectangle<int>(0,3,50,14), juce::Justification::centred);
+            dc->startDragging ("LFO:" + juce::String(lfoIndex), this,
+                               juce::ScaledImage(img), false);
+        }
+    }
 
     float interpolate (float x) const
     {
@@ -2162,6 +2223,135 @@ private:
 };
 
 // ============================================================
+//  CompTransferCurveDisplay — compressor transfer curve (Serum OTT style)
+//  Shows the input→output gain mapping for one band.
+//  X axis: input level (dB, -60 to 0)
+//  Y axis: output level (dB, -60 to 0)
+// ============================================================
+class CompTransferCurveDisplay : public juce::Component, public juce::Timer
+{
+public:
+    CompTransferCurveDisplay (NovaSynthProcessor& proc) : proc(proc)
+    {
+        startTimerHz (30);
+    }
+    ~CompTransferCurveDisplay() override { stopTimer(); }
+
+    // Set which band to display (0=Low, 1=Mid, 2=High)
+    void setBand (int b, float thresh, float ratio)
+    {
+        band     = b;
+        thrDb    = thresh;
+        compRatio = ratio;
+        repaint();
+    }
+
+    void timerCallback() override { repaint(); }
+
+    void paint (juce::Graphics& g) override
+    {
+        static const juce::Colour bandCols[3] = { NS_VIOLET, NS_GREEN, NS_PINK };
+        auto b = getLocalBounds().toFloat();
+
+        // Background
+        g.setColour (juce::Colour (0xff040410));
+        g.fillRoundedRectangle (b, 4.f);
+
+        // Grid lines
+        g.setColour (juce::Colour (0xff0e0e22));
+        int steps = 6;
+        for (int i = 1; i < steps; ++i)
+        {
+            float t = (float)i / steps;
+            g.drawHorizontalLine ((int)(b.getY() + t * b.getHeight()),
+                                   b.getX() + 2, b.getRight() - 2);
+            g.drawVerticalLine   ((int)(b.getX() + t * b.getWidth()),
+                                   b.getY() + 2, b.getBottom() - 2);
+        }
+
+        // 1:1 diagonal (no compression reference)
+        g.setColour (juce::Colour (0xff181838));
+        g.drawLine (b.getX() + 2, b.getBottom() - 2, b.getRight() - 2, b.getY() + 2, 0.5f);
+
+        // Threshold vertical marker
+        float thrNorm = juce::jlimit (0.f, 1.f, (thrDb + 60.f) / 60.f);
+        float thrX    = b.getX() + thrNorm * b.getWidth();
+        g.setColour (juce::Colours::white.withAlpha (0.22f));
+        g.drawVerticalLine ((int)thrX, b.getY() + 2, b.getBottom() - 2);
+
+        // Transfer curve
+        juce::Colour lineCol = (band >= 0 && band < 3) ? bandCols[band] : NS_CYAN;
+        juce::Path   curve;
+        const float  dBmin = -60.f, dBmax = 0.f;
+        const float  invRatio = (compRatio > 1.f) ? (1.f / compRatio) : 1.f;
+        bool         started  = false;
+        const int    N        = 120;
+
+        for (int i = 0; i <= N; ++i)
+        {
+            float t      = (float)i / N;
+            float inDb   = dBmin + t * (dBmax - dBmin);
+            float outDb;
+            if (inDb <= thrDb)
+                outDb = inDb;                    // below threshold: 1:1
+            else
+                outDb = thrDb + (inDb - thrDb) * invRatio;  // above: compressed
+
+            outDb = juce::jlimit (dBmin, dBmax, outDb);
+
+            float xPx = b.getX() + t * b.getWidth();
+            float yPx = b.getBottom() - ((outDb - dBmin) / (dBmax - dBmin)) * b.getHeight();
+            yPx = juce::jlimit (b.getY() + 1.f, b.getBottom() - 1.f, yPx);
+
+            if (!started) { curve.startNewSubPath (xPx, yPx); started = true; }
+            else            curve.lineTo (xPx, yPx);
+        }
+
+        // Fill under curve
+        juce::Path fill = curve;
+        fill.lineTo (b.getRight() - 1, b.getBottom() - 1);
+        fill.lineTo (b.getX() + 1, b.getBottom() - 1);
+        fill.closeSubPath();
+        g.setColour (lineCol.withAlpha (0.07f));
+        g.fillPath (fill);
+        g.setColour (lineCol.withAlpha (0.9f));
+        g.strokePath (curve, juce::PathStrokeType (1.8f,
+            juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // Moving dot at current signal level
+        float sigLin  = proc.bandSignalLevel[juce::jlimit(0,2,band)].load();
+        float sigDb   = (sigLin > 1e-9f)
+            ? juce::jlimit (dBmin, dBmax, 20.f * std::log10 (sigLin))
+            : dBmin;
+        float dotInNorm  = (sigDb - dBmin) / (dBmax - dBmin);
+        float dotOutDb   = (sigDb <= thrDb) ? sigDb : thrDb + (sigDb - thrDb) * invRatio;
+        float dotOutNorm = (juce::jlimit (dBmin, dBmax, dotOutDb) - dBmin) / (dBmax - dBmin);
+
+        float dotX = b.getX() + dotInNorm  * b.getWidth();
+        float dotY = b.getBottom() - dotOutNorm * b.getHeight();
+        dotX = juce::jlimit (b.getX() + 2, b.getRight()  - 2, dotX);
+        dotY = juce::jlimit (b.getY() + 2, b.getBottom() - 2, dotY);
+
+        g.setColour (lineCol.withAlpha (0.4f));
+        g.fillEllipse (dotX - 5.f, dotY - 5.f, 10.f, 10.f);
+        g.setColour (juce::Colours::white.withAlpha (0.9f));
+        g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
+
+        // Border
+        g.setColour (lineCol.withAlpha (0.35f));
+        g.drawRoundedRectangle (b.reduced (0.5f), 4.f, 1.f);
+    }
+
+private:
+    NovaSynthProcessor& proc;
+    int   band      { 0 };
+    float thrDb     { -20.f };
+    float compRatio { 4.f   };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CompTransferCurveDisplay)
+};
+
+// ============================================================
 //  EffectsPanel — Sidebar + content panel (Serum/Vital style)
 // ============================================================
 class EffectsPanel : public juce::Component, public juce::Timer
@@ -2184,6 +2374,7 @@ public:
         , hiThresh    ("THR",   apvts, "compHiThresh",  NS_PINK)
         , hiRatio     ("RATIO", apvts, "compHiRatio",   NS_PINK)
         , hiGain      ("GAIN",  apvts, "compHiGain",    NS_PINK)
+        , compTransferCurve (proc)
         // Overdrive knobs
         , driveAmt    ("DRIVE", apvts, "driveAmount",   NS_GREEN)
         , driveMix    ("MIX",   apvts, "driveMix",      NS_GREEN)
@@ -2201,6 +2392,45 @@ public:
             sideBtn[i].onClick = [this, i] { selectFx (i); };
             addAndMakeVisible (sideBtn[i]);
         }
+
+        // Compressor band selector buttons (LOW / MID / HIGH)
+        static const char* bandNames[3] = { "LOW", "MID", "HIGH" };
+        static const juce::Colour bandCols2[3] = { NS_VIOLET, NS_GREEN, NS_PINK };
+        for (int i = 0; i < 3; ++i)
+        {
+            compBandBtns[i].setButtonText (bandNames[i]);
+            compBandBtns[i].setClickingTogglesState (false);
+            compBandBtns[i].setColour (juce::TextButton::buttonColourId,
+                (i == 0) ? bandCols2[i].withAlpha(0.22f) : juce::Colour(0xff080814));
+            compBandBtns[i].setColour (juce::TextButton::textColourOffId,
+                (i == 0) ? bandCols2[i] : bandCols2[i].withAlpha(0.45f));
+            compBandBtns[i].onClick = [this, i, &apvts]
+            {
+                compCurveSelectedBand = i;
+                // Update colours
+                static const juce::Colour bc[3] = { NS_VIOLET, NS_GREEN, NS_PINK };
+                for (int j = 0; j < 3; ++j)
+                {
+                    bool sel = (j == i);
+                    compBandBtns[j].setColour (juce::TextButton::buttonColourId,
+                        sel ? bc[j].withAlpha(0.22f) : juce::Colour(0xff080814));
+                    compBandBtns[j].setColour (juce::TextButton::textColourOffId,
+                        sel ? bc[j] : bc[j].withAlpha(0.45f));
+                }
+                // Update transfer curve with selected band params
+                static const char* thrIds[3]   = {"compLowThresh","compMidThresh","compHiThresh"};
+                static const char* ratioIds[3]  = {"compLowRatio", "compMidRatio", "compHiRatio"};
+                float thr   = *apvts.getRawParameterValue (thrIds[i]);
+                float ratio = *apvts.getRawParameterValue (ratioIds[i]);
+                compTransferCurve.setBand (i, thr, ratio);
+            };
+            addAndMakeVisible (compBandBtns[i]);
+        }
+        addAndMakeVisible (compTransferCurve);
+        // Init transfer curve for band 0
+        compTransferCurve.setBand (0,
+            *apvts.getRawParameterValue ("compLowThresh"),
+            *apvts.getRawParameterValue ("compLowRatio"));
 
         // Compressor ON button
         compEnableBtn.setButtonText ("ON");
@@ -2243,12 +2473,34 @@ public:
             int cur = (int)*apvts.getRawParameterValue ("driveMode");
             if (auto* p = apvts.getParameter("driveMode"))
                 p->setValueNotifyingHost (p->convertTo0to1 (std::max(0, cur - 1)));
+            updateDriveModeButtons (apvts);
         };
         driveNext.onClick = [this, &apvts] {
             int cur = (int)*apvts.getRawParameterValue ("driveMode");
             if (auto* p = apvts.getParameter("driveMode"))
                 p->setValueNotifyingHost (p->convertTo0to1 (std::min(7, cur + 1)));
+            updateDriveModeButtons (apvts);
         };
+
+        // Drive mode selector buttons (Soft/Hard/Tube/Diode/Fold/Sin/Bit/Down)
+        static const char* driveModeNames[8] = {
+            "SOFT", "HARD", "TUBE", "DIODE", "FOLD", "SIN", "BIT", "DOWN"
+        };
+        for (int i = 0; i < 8; ++i)
+        {
+            driveModeBtn[i].setButtonText (driveModeNames[i]);
+            driveModeBtn[i].setClickingTogglesState (false);
+            driveModeBtn[i].setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a1a0a));
+            driveModeBtn[i].setColour (juce::TextButton::textColourOffId, NS_GREEN.withAlpha(0.45f));
+            driveModeBtn[i].onClick = [this, i, &apvts]
+            {
+                if (auto* p = apvts.getParameter("driveMode"))
+                    p->setValueNotifyingHost (p->convertTo0to1 ((float)i));
+                updateDriveModeButtons (apvts);
+            };
+            addAndMakeVisible (driveModeBtn[i]);
+        }
+        updateDriveModeButtons (apvts);
 
         addAndMakeVisible (transferCurve);
         addAndMakeVisible (driveAmt);
@@ -2280,6 +2532,16 @@ public:
             int   mode  = (int)*proc.apvts.getRawParameterValue ("driveMode");
             float amt   = *proc.apvts.getRawParameterValue ("driveAmount");
             transferCurve.setParams (mode, amt);
+        }
+        // Update compressor transfer curve with current band params
+        if (selectedFx == 0)
+        {
+            static const char* thrIds[3]  = {"compLowThresh","compMidThresh","compHiThresh"};
+            static const char* ratIds[3]  = {"compLowRatio", "compMidRatio", "compHiRatio"};
+            int b2 = juce::jlimit (0, 2, compCurveSelectedBand);
+            float thr   = *proc.apvts.getRawParameterValue (thrIds[b2]);
+            float ratio = *proc.apvts.getRawParameterValue (ratIds[b2]);
+            compTransferCurve.setBand (b2, thr, ratio);
         }
         repaint();
     }
@@ -2346,6 +2608,7 @@ public:
             k->setBounds ({});
         driveAmt.setBounds ({});
         driveMix.setBounds ({});
+        for (int i = 0; i < 8; ++i) driveModeBtn[i].setBounds ({});
 
         if (selectedFx == 0) // COMP
         {
@@ -2378,13 +2641,19 @@ public:
         }
         else if (selectedFx == 1) // DIST
         {
-            // Header row: [ON] [< MODE_NAME >]
+            // Header row: [ON] [< >]
             auto header = content.removeFromTop (36);
             driveEnableBtn.setBounds (header.removeFromLeft (44).reduced (2, 4));
             drivePrev.setBounds      (header.removeFromLeft (24).reduced (2, 4));
             driveNext.setBounds      (header.removeFromRight(24).reduced (2, 4));
-            // (mode name is painted in paintDriveHeader)
             content.removeFromTop (4);
+
+            // Drive mode selector row: 8 buttons
+            auto modeRow = content.removeFromTop (28);
+            int btnW = modeRow.getWidth() / 8;
+            for (int i = 0; i < 8; ++i)
+                driveModeBtn[i].setBounds (modeRow.removeFromLeft (btnW).reduced (2, 2));
+            content.removeFromTop (6);
 
             // Transfer curve: left 60%, knobs: right 40%
             auto curveArea = content.removeFromLeft (content.getWidth() * 6 / 10);
@@ -2418,6 +2687,7 @@ private:
         transferCurve.setVisible  (showDrive);
         driveAmt.setVisible       (showDrive);
         driveMix.setVisible       (showDrive);
+        for (int i = 0; i < 8; ++i) driveModeBtn[i].setVisible (showDrive);
         for (auto* k : { &compInGain, &compOutGain, &compMix, &compUpward, &compDepth,
                           &loThresh, &loRatio, &loGain,
                           &midThresh, &midRatio, &midGain,
@@ -2559,16 +2829,35 @@ private:
     int                   selectedFx { 0 };
     juce::TextButton      sideBtn[5];
     // Compressor
-    juce::TextButton      compEnableBtn;
-    LabelledKnob          compInGain, compOutGain, compMix, compUpward, compDepth;
-    LabelledKnob          loThresh, loRatio, loGain;
-    LabelledKnob          midThresh, midRatio, midGain;
-    LabelledKnob          hiThresh, hiRatio, hiGain;
+    juce::TextButton         compEnableBtn;
+    LabelledKnob             compInGain, compOutGain, compMix, compUpward, compDepth;
+    LabelledKnob             loThresh, loRatio, loGain;
+    LabelledKnob             midThresh, midRatio, midGain;
+    LabelledKnob             hiThresh, hiRatio, hiGain;
+    // Compressor transfer curve (one per band, shown in selector area)
+    int                      compCurveSelectedBand { 0 };
+    CompTransferCurveDisplay compTransferCurve;
+    juce::TextButton         compBandBtns[3];   // LOW / MID / HIGH band selectors
     // Overdrive
     juce::TextButton      driveEnableBtn;
     juce::TextButton      drivePrev, driveNext;
+    juce::TextButton      driveModeBtn[8];
     TransferCurveDisplay  transferCurve;
     LabelledKnob          driveAmt, driveMix;
+
+    void updateDriveModeButtons (juce::AudioProcessorValueTreeState& apvts)
+    {
+        int cur = (int)*apvts.getRawParameterValue ("driveMode");
+        for (int i = 0; i < 8; ++i)
+        {
+            bool active = (i == cur);
+            driveModeBtn[i].setColour (juce::TextButton::buttonColourId,
+                active ? NS_GREEN.withAlpha(0.35f) : juce::Colour(0xff0a1a0a));
+            driveModeBtn[i].setColour (juce::TextButton::textColourOffId,
+                active ? NS_GREEN : NS_GREEN.withAlpha(0.45f));
+            driveModeBtn[i].repaint();
+        }
+    }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectsPanel)
 };
