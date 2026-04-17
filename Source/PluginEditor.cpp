@@ -21,10 +21,17 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
         tabBtns[i].setColour (juce::TextButton::textColourOffId, NS_TEXT2.withAlpha (0.6f));
         tabBtns[i].setColour (juce::TextButton::textColourOnId,  c);
         // First 3 buttons → ENV section, last 4 → LFO section
-        if (i < 3)
+        if (i < 3) {
             tabBtns[i].onClick = [this, i]() { showEnvTab (i); };
-        else
+            // ENV2/ENV3 are draggable as mod sources (ENV1 hardwired to amplitude)
+            if (i >= 1)
+                tabBtns[i].dragPayload = "ENV:" + juce::String(i);  // 1=ENV2 mod idx 4, 2=ENV3 idx 5
+        }
+        else {
             tabBtns[i].onClick = [this, i]() { showLfoTab (i - 3); };
+            // LFO tabs draggable for routing
+            tabBtns[i].dragPayload = "LFO:" + juce::String(i - 3);
+        }
         addAndMakeVisible (tabBtns[i]);
     }
 
@@ -101,9 +108,44 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
         }
         updateModeButtonStates (i);
 
-        // BPM sync toggle
+        // BPM sync toggle — when on, the RATE knob snaps to musical divisions
         auto syncID = "lfo" + juce::String(i+1) + "Sync";
         auto divID  = "lfo" + juce::String(i+1) + "SyncDiv";
+
+        // Setup rate knob's text display: shows division when sync on, Hz otherwise
+        if (lfoRateKnob[i])
+        {
+            auto& s = lfoRateKnob[i]->slider;
+            s.textFromValueFunction = [this, i, syncID](double v) -> juce::String
+            {
+                static const char* divLabels[9] = { "4/1","2/1","1/1","1/2","1/4","1/8","1/16","1/32","1/64" };
+                if (this->apvts.getRawParameterValue (syncID) != nullptr
+                    && *this->apvts.getRawParameterValue (syncID) > 0.5f)
+                {
+                    auto& sl = lfoRateKnob[i]->slider;
+                    double n = sl.getNormalisableRange().convertTo0to1 (v);
+                    int    d = juce::jlimit (0, 8, (int)std::round (n * 8.0));
+                    return divLabels[d];
+                }
+                if (v < 1.0) return juce::String (v, 2) + " Hz";
+                return juce::String (v, 1) + " Hz";
+            };
+            // When sync is on, also push div index to the SyncDiv param
+            s.onValueChange = [this, i, syncID, divID]()
+            {
+                if (lfoRateKnob[i]) lfoRateKnob[i]->repaint();
+                if (this->apvts.getRawParameterValue (syncID) != nullptr
+                    && *this->apvts.getRawParameterValue (syncID) > 0.5f)
+                {
+                    auto& sl = lfoRateKnob[i]->slider;
+                    double n = sl.getNormalisableRange().convertTo0to1 (sl.getValue());
+                    int    d = juce::jlimit (0, 8, (int)std::round (n * 8.0));
+                    if (auto* p = this->apvts.getParameter (divID))
+                        p->setValueNotifyingHost (p->convertTo0to1 ((float)d));
+                }
+            };
+        }
+
         lfoSyncBtn[i].setButtonText ("BPM");
         lfoSyncBtn[i].setClickingTogglesState (true);
         lfoSyncBtn[i].setToggleState (*apvts.getRawParameterValue (syncID) > 0.5f,
@@ -112,38 +154,18 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
         lfoSyncBtn[i].setColour (juce::TextButton::buttonOnColourId, lc.withAlpha(0.45f));
         lfoSyncBtn[i].setColour (juce::TextButton::textColourOffId,  lc.withAlpha(0.5f));
         lfoSyncBtn[i].setColour (juce::TextButton::textColourOnId,   lc);
-        lfoSyncBtn[i].onClick = [this, i, syncID, divID]()
+        lfoSyncBtn[i].onClick = [this, i, syncID]()
         {
             float v = lfoSyncBtn[i].getToggleState() ? 1.0f : 0.0f;
             if (auto* p = this->apvts.getParameter (syncID))
                 p->setValueNotifyingHost (v);
-            // Show/hide rate knob vs div selector
-            if (lfoRateKnob[i])  lfoRateKnob[i]->setVisible (v < 0.5f);
-            lfoSyncDivBox[i].setVisible (v > 0.5f);
-            resized();
+            // Refresh rate knob display
+            if (lfoRateKnob[i]) {
+                lfoRateKnob[i]->slider.updateText();
+                lfoRateKnob[i]->repaint();
+            }
         };
         addAndMakeVisible (lfoSyncBtn[i]);
-
-        // Sync division dropdown
-        const char* divLabels[9] = { "4/1","2/1","1/1","1/2","1/4","1/8","1/16","1/32","1/64" };
-        for (int d = 0; d < 9; ++d) lfoSyncDivBox[i].addItem (divLabels[d], d + 1);
-        lfoSyncDivBox[i].setSelectedId ((int)*apvts.getRawParameterValue (divID) + 1,
-                                         juce::dontSendNotification);
-        lfoSyncDivBox[i].setColour (juce::ComboBox::backgroundColourId, juce::Colour(0xff0a0a14));
-        lfoSyncDivBox[i].setColour (juce::ComboBox::textColourId,       lc);
-        lfoSyncDivBox[i].setColour (juce::ComboBox::outlineColourId,    lc.withAlpha(0.3f));
-        lfoSyncDivBox[i].onChange = [this, i, divID]()
-        {
-            int sel = lfoSyncDivBox[i].getSelectedId() - 1;
-            if (auto* p = this->apvts.getParameter (divID))
-                p->setValueNotifyingHost (p->convertTo0to1 ((float)sel));
-        };
-        addAndMakeVisible (lfoSyncDivBox[i]);
-
-        // Initial visibility based on sync state
-        bool isSync = lfoSyncBtn[i].getToggleState();
-        if (lfoRateKnob[i]) lfoRateKnob[i]->setVisible (!isSync);
-        lfoSyncDivBox[i].setVisible (isSync);
     }
 
     showEnvTab (0);
@@ -256,13 +278,10 @@ void EnvLfoPanel::showLfoTab (int idx)
     {
         bool show = (l == idx);
         if (lfoDisplay[l])   lfoDisplay[l]->setVisible (show);
+        if (lfoRateKnob[l])  lfoRateKnob[l]->setVisible (show);
         if (lfoShapeKnob[l]) lfoShapeKnob[l]->setVisible (show);
         for (int m = 0; m < 3; ++m) lfoModeBtns[l][m].setVisible (show);
         lfoSyncBtn[l].setVisible (show);
-        // Rate knob OR sync div box, depending on sync state
-        bool isSync = lfoSyncBtn[l].getToggleState();
-        if (lfoRateKnob[l])  lfoRateKnob[l]->setVisible (show && !isSync);
-        lfoSyncDivBox[l].setVisible (show && isSync);
     }
 
     resized();
@@ -360,19 +379,10 @@ void EnvLfoPanel::resized()
             lfoDisplay[l]->setBounds (content.removeFromTop (dispH));
         content.removeFromTop (3);
 
-        // RATE/DIV + SHAPE knobs side by side
+        // RATE + SHAPE knobs side by side
         int kw = content.getWidth() / 2;
-        auto leftArea = content.removeFromLeft (kw);
         if (lfoRateKnob[l] && lfoRateKnob[l]->isVisible())
-            lfoRateKnob[l]->setBounds (leftArea);
-        if (lfoSyncDivBox[l].isVisible())
-        {
-            // Center vertically the dropdown in the knob area
-            int dh = 24;
-            int dy = leftArea.getY() + (leftArea.getHeight() - dh) / 2;
-            lfoSyncDivBox[l].setBounds (leftArea.getX() + 8, dy,
-                                         leftArea.getWidth() - 16, dh);
-        }
+            lfoRateKnob[l]->setBounds (content.removeFromLeft (kw));
         if (lfoShapeKnob[l] && lfoShapeKnob[l]->isVisible())
             lfoShapeKnob[l]->setBounds (content);
     }

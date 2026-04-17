@@ -2131,7 +2131,38 @@ private:
     int  currentEnvTab { 0 };  // 0=ENV1 1=ENV2 2=ENV3
     int  currentLfoTab { 0 };  // 0=LFO1 1=LFO2 2=LFO3 3=LFO4
 
-    juce::TextButton tabBtns[7];  // [0-2]=ENV1-3, [3-6]=LFO1-4
+    // Draggable tab button — initiates a drag-and-drop when grabbed
+    // (used for LFO tabs so user can drag "LFO 1" onto a knob to route).
+    struct DragTabButton : public juce::TextButton
+    {
+        juce::String dragPayload;   // empty = no drag
+        bool dragStarted { false };
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (dragPayload.isEmpty() || dragStarted) return;
+            if (e.getDistanceFromDragStart() < 6) return;
+            if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor (this))
+            {
+                dragStarted = true;
+                juce::Image img (juce::Image::ARGB, 50, 20, true);
+                juce::Graphics ig (img);
+                ig.setColour (findColour (juce::TextButton::textColourOnId).withAlpha (0.92f));
+                ig.fillRoundedRectangle (1.f, 1.f, 48.f, 18.f, 4.f);
+                ig.setColour (juce::Colours::white);
+                ig.setFont (juce::FontOptions (9.f, juce::Font::bold));
+                ig.drawText (getButtonText(),
+                             juce::Rectangle<int>(0,3,50,14), juce::Justification::centred);
+                dc->startDragging (dragPayload, this, juce::ScaledImage(img), false);
+            }
+        }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            dragStarted = false;
+            juce::TextButton::mouseUp (e);
+        }
+    };
+
+    DragTabButton tabBtns[7];  // [0-2]=ENV1-3, [3-6]=LFO1-4
 
     // ENV (3 envs × 4 knobs)
     std::unique_ptr<AdsrDisplay>  envDisplay[3];
@@ -2143,7 +2174,6 @@ private:
     std::unique_ptr<LabelledKnob>     lfoShapeKnob[4];
     juce::TextButton                  lfoModeBtns[4][3];   // [lfoIdx][mode: FREE/TRIG/ONE]
     juce::TextButton                  lfoSyncBtn[4];       // BPM sync toggle per LFO
-    juce::ComboBox                    lfoSyncDivBox[4];    // 1/2, 1/4, 1/8...
     int currentLfoMode[4] = { 0, 0, 0, 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EnvLfoPanel)
