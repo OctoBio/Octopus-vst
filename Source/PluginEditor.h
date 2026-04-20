@@ -1207,7 +1207,6 @@ public:
             proc->addModConnection (modIdx, storedParamID, 0.5f);
     }
 
-private:
     void updateValueDisplay()
     {
         juce::String val;
@@ -1218,6 +1217,8 @@ private:
         valueLabel.setText (val, juce::dontSendNotification);
         label.setText (labelText, juce::dontSendNotification);
     }
+
+private:
 
     void timerCallback() override
     {

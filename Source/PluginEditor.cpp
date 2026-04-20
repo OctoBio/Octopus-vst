@@ -137,7 +137,10 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
             // AND push the div index to the SyncDiv param.
             s.onValueChange = [this, i, syncID, divID]()
             {
-                if (lfoRateKnob[i]) lfoRateKnob[i]->repaint();
+                if (lfoRateKnob[i]) {
+                    lfoRateKnob[i]->updateValueDisplay();
+                    lfoRateKnob[i]->repaint();
+                }
                 if (this->apvts.getRawParameterValue (syncID) != nullptr
                     && *this->apvts.getRawParameterValue (syncID) > 0.5f)
                 {
@@ -171,7 +174,7 @@ EnvLfoPanel::EnvLfoPanel (NovaSynthProcessor& proc,
                 p->setValueNotifyingHost (v);
             // Refresh rate knob display
             if (lfoRateKnob[i]) {
-                lfoRateKnob[i]->slider.updateText();
+                lfoRateKnob[i]->updateValueDisplay();
                 lfoRateKnob[i]->repaint();
             }
         };
