@@ -1878,6 +1878,7 @@ private:
             case 1: return juce::String::charToString(0x25A0) + "  SQUARE";
             case 2: return juce::String::charToString(0x25B3) + "  TRIANGLE";
             case 3: return "~  SINE";
+            case 4: return juce::String::charToString(0x2248) + "  WAVETABLE";
             default: return "SAW";
         }
     }
@@ -1894,10 +1895,11 @@ private:
     {
         juce::PopupMenu m;
         int cur = (int)*apvts.getRawParameterValue (paramID);
-        m.addItem (1, juce::String::charToString(0x25B6) + "  SAW",      true, cur == 0);
-        m.addItem (2, juce::String::charToString(0x25A0) + "  SQUARE",   true, cur == 1);
-        m.addItem (3, juce::String::charToString(0x25B3) + "  TRIANGLE", true, cur == 2);
+        m.addItem (1, juce::String::charToString(0x25B6) + "  SAW",       true, cur == 0);
+        m.addItem (2, juce::String::charToString(0x25A0) + "  SQUARE",    true, cur == 1);
+        m.addItem (3, juce::String::charToString(0x25B3) + "  TRIANGLE",  true, cur == 2);
         m.addItem (4, "~  SINE",                                          true, cur == 3);
+        m.addItem (5, juce::String::charToString(0x2248) + "  WAVETABLE", true, cur == 4);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (btn),
             [this] (int result) {
                 if (result > 0) {
@@ -2008,6 +2010,14 @@ public:
           fine     ("FINE",  apvts, prefix+"Detune",    colour),
           phase    ("PHASE", apvts, prefix+"Phase",     colour),
           randKnob ("RAND",  apvts, prefix+"RandPhase", colour),
+          wtPos    ("POS",   apvts, prefix+"WtPos",     colour),
+          wtCombo  ("TABLE", apvts, prefix+"Wt",
+                    []() {
+                        juce::StringArray a;
+                        for (int i = 0; i < WavetableBank::instance().numTables(); ++i)
+                            a.add (WavetableBank::instance().getName (i));
+                        return a;
+                    }()),
           enableBtn("ON",    apvts, prefix+"Enabled",   colour),
           uniView  (apvts, prefix, colour)
     {
@@ -2027,6 +2037,7 @@ public:
         addAndMakeVisible (oct);       addAndMakeVisible (semi);
         addAndMakeVisible (fine);      addAndMakeVisible (phase);
         addAndMakeVisible (randKnob);  addAndMakeVisible (enableBtn);
+        addAndMakeVisible (wtCombo);   addAndMakeVisible (wtPos);
 
         resetAllBtn.setButtonText (juce::String::charToString (0x21BA) + " RST");
         resetAllBtn.setColour (juce::TextButton::buttonColourId,  juce::Colour(0xff0a0a18));
@@ -2037,7 +2048,8 @@ public:
                              prefix+"Oct", prefix+"Tune", prefix+"Detune",
                              prefix+"Level", prefix+"Pan", prefix+"Phase",
                              prefix+"RandPhase", prefix+"UniVoices",
-                             prefix+"UniDetune", prefix+"UniBlend", prefix+"Enabled" })
+                             prefix+"UniDetune", prefix+"UniBlend", prefix+"Enabled",
+                             prefix+"Wt", prefix+"WtPos" })
                 if (auto* p = apvts.getParameter (id))
                     p->setValueNotifyingHost (p->getDefaultValue());
         };
@@ -2050,6 +2062,7 @@ public:
         uniBlend.setProcessor(p); level.setProcessor(p);
         pan.setProcessor(p);      fine.setProcessor(p);
         phase.setProcessor(p);    randKnob.setProcessor(p);
+        wtPos.setProcessor(p);
     }
 
     void paint (juce::Graphics& g) override
@@ -2090,6 +2103,15 @@ public:
 
         // ---- Row 1: WAVE dropdown button full width (26px) ----
         waveBtn.setBounds (b.removeFromTop (26));
+        b.removeFromTop (2);
+
+        // ---- Row 1b: WT table combo (60%) + WT Pos knob (40%) ----
+        {
+            auto row = b.removeFromTop (48);
+            int wtComboW = row.getWidth() * 60 / 100;
+            wtCombo.setBounds (row.removeFromLeft (wtComboW));
+            wtPos.setBounds   (row);
+        }
         b.removeFromTop (2);
 
         // ---- Row 2: WARP combo (60%) + WarpAmt knob (40%) ----
@@ -2153,8 +2175,8 @@ private:
     WaveformDisplay display;
     UnisonDisplay   uniView;
     WaveDropButton  waveBtn;
-    LabelledCombo   warpCombo;
-    LabelledKnob    warpAmt, uniDetune, uniBlend, level, pan, fine, phase, randKnob;
+    LabelledCombo   warpCombo, wtCombo;
+    LabelledKnob    warpAmt, uniDetune, uniBlend, level, pan, fine, phase, randKnob, wtPos;
     StepDisplay     uniVoices, oct, semi;
     ToggleBtn       enableBtn;
     juce::TextButton resetAllBtn;

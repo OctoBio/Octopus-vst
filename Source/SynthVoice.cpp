@@ -26,6 +26,11 @@ float Oscillator::sampleWaveform (float p) const
         case Waveform::Sine:
             return std::sin (p * juce::MathConstants<float>::twoPi);
 
+        case Waveform::Wavetable: {
+            const auto& wt = WavetableBank::instance().get (wtIndex);
+            return wt.sample (wtPosition, p);
+        }
+
         default: return 0.0f;
     }
 }

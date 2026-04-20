@@ -15,7 +15,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
         return std::make_unique<juce::AudioParameterChoice>(id, name, choices, def);
     };
 
-    juce::StringArray waveforms { "Saw", "Square", "Triangle", "Sine" };
+    juce::StringArray waveforms { "Saw", "Square", "Triangle", "Sine", "WT" };
+    juce::StringArray wavetables;
+    for (int wi = 0; wi < WavetableBank::instance().numTables(); ++wi)
+        wavetables.add (WavetableBank::instance().getName (wi));
     juce::StringArray warpModes { "None", "Bend+", "Bend-", "Sync", "Fold", "Mirror", "PWM" };
     juce::StringArray lfoWaves  { "Sine", "Triangle", "Saw", "Square" };
 
@@ -52,6 +55,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout NovaSynthProcessor::createPa
                                    ("OSC"+o+" Phase").toRawUTF8(), 0.0f, 1.0f, 0.0f));
         params.push_back (pFloat (("osc"+o+"RandPhase").toRawUTF8(),
                                    ("OSC"+o+" Rand Phase").toRawUTF8(), 0.0f, 1.0f, 0.0f));
+
+        // Wavetable
+        params.push_back (pChoice (("osc"+o+"Wt").toRawUTF8(),
+                                    ("OSC"+o+" Wavetable").toRawUTF8(), wavetables));
+        params.push_back (pFloat  (("osc"+o+"WtPos").toRawUTF8(),
+                                    ("OSC"+o+" WT Pos").toRawUTF8(), 0.0f, 1.0f, 0.0f));
 
         // Unison
         params.push_back (pFloat (("osc"+o+"UniVoices").toRawUTF8(),
@@ -356,6 +365,9 @@ void NovaSynthProcessor::updateVoiceParameters()
 
             osc.initPhase = PARAM(prefix+"Phase");
             osc.randPhase = PARAM(prefix+"RandPhase");
+
+            osc.wtIndex    = (int)std::round (PARAM(prefix+"Wt"));
+            osc.wtPosition = P(prefix+"WtPos");
 
             osc.unisonVoices = (int)std::round (PARAM(prefix+"UniVoices"));
             osc.unisonDetune = P(prefix+"UniDetune");

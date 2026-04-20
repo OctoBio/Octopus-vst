@@ -57,12 +57,260 @@ struct LFO
 };
 
 // ============================================================
+//  Wavetable — bank of morphable frames
+// ============================================================
+struct Wavetable
+{
+    static constexpr int kFrameSize = 2048;
+    static constexpr int kNumFrames = 8;
+
+    juce::String name;
+    // frames[frameIndex][sampleIndex]
+    std::array<std::array<float, kFrameSize>, kNumFrames> frames {};
+
+    // Bilinear sample: fade across frames AND across phase samples
+    float sample (float framePos01, float phase01) const noexcept
+    {
+        float fp = juce::jlimit (0.0f, 1.0f, framePos01) * (float)(kNumFrames - 1);
+        int   f0 = juce::jlimit (0, kNumFrames - 1, (int)fp);
+        int   f1 = juce::jmin (kNumFrames - 1, f0 + 1);
+        float ff = fp - (float)f0;
+
+        float p = (phase01 - std::floor (phase01)) * (float)kFrameSize;
+        int   p0 = (int)p;
+        int   p1 = (p0 + 1) % kFrameSize;
+        float pp = p - (float)p0;
+        p0 %= kFrameSize;
+
+        const float a = frames[(size_t)f0][(size_t)p0] * (1.0f - pp) + frames[(size_t)f0][(size_t)p1] * pp;
+        const float b = frames[(size_t)f1][(size_t)p0] * (1.0f - pp) + frames[(size_t)f1][(size_t)p1] * pp;
+        return a * (1.0f - ff) + b * ff;
+    }
+};
+
+// Singleton bank of built-in wavetables. Generated at first access.
+class WavetableBank
+{
+public:
+    static WavetableBank& instance()
+    {
+        static WavetableBank b;
+        return b;
+    }
+
+    int numTables() const { return (int)tables.size(); }
+    const Wavetable& get (int i) const
+    {
+        return tables[(size_t) juce::jlimit (0, (int)tables.size() - 1, i)];
+    }
+    juce::String getName (int i) const
+    {
+        return tables[(size_t) juce::jlimit (0, (int)tables.size() - 1, i)].name;
+    }
+
+private:
+    std::vector<Wavetable> tables;
+
+    WavetableBank()
+    {
+        // --- 1) Basic: morph Sin → Tri → Saw → Square across frames
+        {
+            Wavetable wt; wt.name = "Basic";
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float t = (float)f / (float)(Wavetable::kNumFrames - 1); // 0..1
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    // Additive: fundamental + (t * odd harmonics saw-like)
+                    float v = 0.0f;
+                    int maxH = (int) juce::jlimit (1.0f, 64.0f, 1.0f + t * 63.0f);
+                    for (int h = 1; h <= maxH; ++h)
+                        v += std::sin (juce::MathConstants<float>::twoPi * h * p) / (float)h;
+                    wt.frames[(size_t)f][(size_t)s] = v * 0.6f;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 2) Pulse: PWM from narrow to 50%, additive band-limited
+        {
+            Wavetable wt; wt.name = "Pulse";
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float duty = 0.05f + (float)f / (float)(Wavetable::kNumFrames - 1) * 0.45f;
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (int h = 1; h <= 32; ++h)
+                    {
+                        float a = 2.0f / (juce::MathConstants<float>::pi * (float)h)
+                                  * std::sin (juce::MathConstants<float>::pi * (float)h * duty);
+                        v += a * std::cos (juce::MathConstants<float>::twoPi * (float)h * p);
+                    }
+                    wt.frames[(size_t)f][(size_t)s] = v;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 3) Formant: morphs through vowel-like harmonic clusters
+        {
+            Wavetable wt; wt.name = "Formant";
+            // Formants centres (vowel-ish): frame picks one set
+            const float centres[Wavetable::kNumFrames][3] = {
+                { 2.0f, 6.0f, 12.0f },   // A
+                { 1.5f, 5.0f, 10.0f },   // E
+                { 1.0f, 4.0f,  8.0f },   // I
+                { 3.0f, 7.0f, 14.0f },   // O
+                { 2.5f, 6.5f, 11.0f },   // U
+                { 1.0f, 5.5f, 13.0f },
+                { 2.0f, 8.0f, 16.0f },
+                { 4.0f, 9.0f, 18.0f }
+            };
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (int h = 1; h <= 24; ++h)
+                    {
+                        float amp = 0.0f;
+                        for (int c = 0; c < 3; ++c) {
+                            float d = (float)h - centres[f][c];
+                            amp += std::exp (-d * d * 0.4f);
+                        }
+                        v += amp * std::sin (juce::MathConstants<float>::twoPi * (float)h * p) / (float)h;
+                    }
+                    wt.frames[(size_t)f][(size_t)s] = v * 0.5f;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 4) Harmonics: 1 → 2 → 4 → 8 harmonics
+        {
+            Wavetable wt; wt.name = "Harmonics";
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                int  hCount = 1 << f;   // 1, 2, 4, 8, 16, 32, 64, 128 clamped
+                hCount = juce::jmin (hCount, 64);
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (int h = 1; h <= hCount; ++h)
+                        v += std::sin (juce::MathConstants<float>::twoPi * (float)h * p) / (float)h;
+                    wt.frames[(size_t)f][(size_t)s] = v * 0.6f;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 5) Bell: inharmonic partials
+        {
+            Wavetable wt; wt.name = "Bell";
+            const float partials[] = { 1.0f, 2.76f, 5.41f, 8.94f, 13.34f, 18.64f };
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float t = (float)f / (float)(Wavetable::kNumFrames - 1);
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (size_t k = 0; k < sizeof(partials)/sizeof(float); ++k)
+                    {
+                        float amp = std::exp (-(float)k * (1.0f - t) * 0.8f);
+                        v += amp * std::sin (juce::MathConstants<float>::twoPi * partials[k] * p);
+                    }
+                    wt.frames[(size_t)f][(size_t)s] = v * 0.35f;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 6) Saw morph: triangle → saw → reverse saw
+        {
+            Wavetable wt; wt.name = "SawMorph";
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float t = (float)f / (float)(Wavetable::kNumFrames - 1);   // 0..1
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (int h = 1; h <= 32; ++h)
+                    {
+                        float sign = (h % 2 == 0) ? -1.0f : 1.0f;
+                        // Tri → Saw morph: exponent shifts weighting of odd/even
+                        float amp = std::pow (1.0f / (float)h, 2.0f - t) * sign;
+                        v += amp * std::sin (juce::MathConstants<float>::twoPi * (float)h * p);
+                    }
+                    wt.frames[(size_t)f][(size_t)s] = v;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 7) Organ: drawbar-ish blend
+        {
+            Wavetable wt; wt.name = "Organ";
+            const int bars[] = { 1, 2, 3, 4, 6, 8 };
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float t = (float)f / (float)(Wavetable::kNumFrames - 1);
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float v = 0.0f;
+                    for (size_t k = 0; k < sizeof(bars)/sizeof(int); ++k)
+                    {
+                        float amp = std::cos (t * juce::MathConstants<float>::pi * 0.5f + (float)k * 0.4f);
+                        amp = juce::jmax (0.0f, amp);
+                        v += amp * std::sin (juce::MathConstants<float>::twoPi * (float)bars[k] * p);
+                    }
+                    wt.frames[(size_t)f][(size_t)s] = v * 0.3f;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+        // --- 8) Digital: chebyshev-ish waveshape sweep
+        {
+            Wavetable wt; wt.name = "Digital";
+            for (int f = 0; f < Wavetable::kNumFrames; ++f)
+            {
+                float k = 1.0f + (float)f * 2.0f;   // 1, 3, 5, 7...
+                for (int s = 0; s < Wavetable::kFrameSize; ++s)
+                {
+                    float p = (float)s / (float)Wavetable::kFrameSize;
+                    float sv = std::sin (juce::MathConstants<float>::twoPi * p);
+                    // Chebyshev-like: cos(k*acos(x)) is hard, use tanh(k*sin) which is smoother
+                    float v = std::tanh (sv * k);
+                    wt.frames[(size_t)f][(size_t)s] = v;
+                }
+            }
+            tables.push_back (std::move (wt));
+        }
+
+        // Normalize peaks for safety
+        for (auto& wt : tables)
+            for (auto& frame : wt.frames)
+            {
+                float peak = 0.0001f;
+                for (float v : frame) peak = juce::jmax (peak, std::abs (v));
+                float g = 1.0f / peak;
+                for (float& v : frame) v *= g;
+            }
+    }
+};
+
+// ============================================================
 //  Oscillateur complet — même paramètres que Serum
 // ============================================================
 struct Oscillator
 {
     // --- Waveform ---
-    enum class Waveform { Saw=0, Square=1, Triangle=2, Sine=3 };
+    enum class Waveform { Saw=0, Square=1, Triangle=2, Sine=3, Wavetable=4 };
+
+    // --- Wavetable state ---
+    int   wtIndex    { 0 };      // which built-in table
+    float wtPosition { 0.0f };   // 0..1 morph across frames
 
     // --- Warp modes (comme Serum) ---
     enum class WarpMode { None=0, BendPos=1, BendNeg=2, Sync=3, Fold=4, Mirror=5, PWM=6 };
